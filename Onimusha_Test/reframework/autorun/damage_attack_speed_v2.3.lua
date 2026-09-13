@@ -1,10 +1,13 @@
--- Damage & Attack Speed v2.1 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v2.1: the word "Sprint" was missing from every detection list, so sprint
--- clips/actions could only engage via measured travel - after an attack
--- (stationary, hold zeroed) that meant 0.5-1s of vanilla sprint until the
--- body displaced enough. Sprint is now a first-class locomotion keyword
--- next to Walk/Run/Dash/Jog. Plus an engage event ring in the proof file
--- so any future delay can be diagnosed from data instead of guesses.
+-- Damage & Attack Speed v2.3 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v2.3: ring data proved kicks land on time, so the delay is AFTER our
+-- writes. Two hardening fixes: (1) force-rewrite - the layer_out cache
+-- assumed our speeds persist, but if the game resets layer speed on an
+-- action enter the cache would skip rewrites forever; now doEnter kicks
+-- and clip changes force a full rewrite. (2) attack-recovery gate - past
+-- ~60% of an attack clip, MOV may engage (strike itself never gets it),
+-- so sprint chained out of a swing doesn't wait out the full recovery.
+-- Plus layer-0 speed sampled into the proof, showing whether our speed
+-- actually sticks on the layer.
 --
 -- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
 -- scaling at any setting. Module resolution is now multi-step with a trail
@@ -18,7 +21,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.1", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.3", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -394,6 +397,7 @@ local function write_proof()
         mov_speed = proof.mov_speed or 0,
         last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
         last_act = proof.last_act or "?", ring = proof.ring,
+        layer_speed = proof.layer_speed or 0,
     })
 end
 
@@ -543,10 +547,13 @@ local travel_last, travel_t = nil, 0
 local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
 local MOV_HOLD_FRAMES = 45 -- ~0.75s at 60fps: bridges transitions + stick flicker
 local mov_hold = 0
+-- v2.3: past this much of an attack clip the swing is recovery, not strike.
+local REC_AT = 0.6
+local last_bank, last_motid = nil, nil -- v2.3: clip changes force a rewrite
 -- v2.1 engage/release event ring (last 12) for diagnosing delays from data.
 local function ring_push(ev)
     proof.ring[#proof.ring + 1] = { t = tick, e = ev }
-    while #proof.ring > 12 do table.remove(proof.ring, 1) end
+    while #proof.ring > 20 do table.remove(proof.ring, 1) end
 end
 local function current_action()
     if chara == nil then return nil end
@@ -586,6 +593,16 @@ end
 re.on_pre_application_entry("UpdateMotion", function()
     tick = tick + 1
     if tick % 600 == 0 then write_proof() end
+    -- v2.3: sample the actual layer-0 speed 1x/sec while latched. If the
+    -- game resets speeds behind our back, this shows it in the proof.
+    if tick % 60 == 0 and mov_hold > 0 then
+        local mo_s = player_motion()
+        local ly_s = mo_s and try_call(mo_s, "getLayer", 0) or nil
+        local sp = ly_s and try_call(ly_s, "get_Speed") or nil
+        if type(sp) == "number" then
+            proof.layer_speed = math.floor(sp * 100) / 100
+        end
+    end
     local want_atk = cfg.atk ~= nil and cfg.atk > 1.0
     local want_mov = cfg.mov ~= nil and cfg.mov > 1.0
     if not want_atk and not want_mov then
@@ -603,18 +620,27 @@ re.on_pre_application_entry("UpdateMotion", function()
     local cat = action_category()
     local act = current_action()
     if cat == "attack" then
-        -- v2.0: attacks NEVER get MOV. ATK scales them, otherwise restore.
-        -- Previously the movement block below could engage mid-swing from
-        -- slide drift or hold bleed, tying the two sliders together.
-        travel_last, mov_hold = nil, 0
-        proof.mov_blocked = "attack"
-        if want_atk then
-            scale_layers(cfg.atk)
-        elseif next(layer_orig) ~= nil then
-            restore_layers()
+        -- v2.3: the strike never gets MOV, but past REC_AT of the clip it
+        -- is recovery - fall through to the movement block so a chained
+        -- sprint doesn't wait out the tail of the swing.
+        local rec = nil
+        if want_mov then
+            local mo_r = player_motion()
+            local ly_r = mo_r and try_call(mo_r, "getLayer", 0) or nil
+            rec = ly_r and try_call(ly_r, "get_NormalizeTime") or nil
         end
-        sync_root_rate(1.0, false)
-        return
+        if type(rec) ~= "number" or rec < REC_AT then
+            travel_last, mov_hold = nil, 0
+            proof.mov_blocked = "attack"
+            if want_atk then
+                scale_layers(cfg.atk)
+            elseif next(layer_orig) ~= nil then
+                restore_layers()
+            end
+            sync_root_rate(1.0, false)
+            return
+        end
+        proof.mov_blocked = "attack-rec"
     end
     if act ~= nil and is_interaction_action(act) then
         -- v2.0: FasterInteractions owns these actions (its own layer
@@ -626,7 +652,7 @@ re.on_pre_application_entry("UpdateMotion", function()
         sync_root_rate(1.0, false)
         return
     end
-    proof.mov_blocked = nil
+    if proof.mov_blocked ~= "attack-rec" then proof.mov_blocked = nil end
     if want_mov and player_go ~= nil then
         local aname = action_name()
         local climbing = false
@@ -649,6 +675,12 @@ re.on_pre_application_entry("UpdateMotion", function()
             local bank = layer and try_call(layer, "get_MotionBankID") or nil
             local motid = layer and try_call(layer, "get_MotionID") or nil
             if type(bank) == "number" and type(motid) == "number" then
+                if bank ~= last_bank or motid ~= last_motid then
+                    -- v2.3: the game may reset layer speeds on clip changes;
+                    -- drop the write cache so this frame rewrites for sure.
+                    last_bank, last_motid = bank, motid
+                    layer_out = {}
+                end
                 loco_clip = is_loco_clip(bank, motid)
                 loop_clip = is_loop_clip(bank, motid)
             end
@@ -723,6 +755,91 @@ re.on_application_entry("UpdateMotion", function()
     pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(m))
 end)
 
+-- v2.2 event-driven kick-start: apply MOV the exact frame a locomotion
+-- action enters instead of waiting for the poll to observe a clip, an
+-- action class, or measured travel. Layers + full hold only (the poll
+-- decides the root rate next frame, so transitions can't zoom).
+-- Attack/interaction enters just clear the latch and trace.
+local LOCO_ACT_KEYS = { "Run", "Walk", "Dash", "Sprint", "Move", "Turn", "Strafe", "Jog" }
+local function is_loco_action_name(n)
+    if n == nil then return false end
+    for _, k in ipairs(LOCO_ACT_KEYS) do
+        if n:find(k, 1, true) then return true end
+    end
+    return false
+end
+do
+    local doenter_m = nil
+    local ok_td, base_td = pcall(sdk.find_type_definition, "app.PlayerActionBase.cPlayerActionBase")
+    if ok_td and base_td ~= nil then
+        local okm, m = pcall(base_td.get_method, base_td, "doEnter")
+        if okm and m ~= nil then doenter_m = m end
+    end
+    if doenter_m ~= nil then
+        pcall(sdk.hook, doenter_m, function(args)
+            if cfg.mov == nil or cfg.mov <= 1.0 then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_act, act = pcall(sdk.to_managed_object, args[2])
+            if not ok_act or act == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if not resolve_player() or entity == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            -- Only our own player's actions.
+            local ok_e, aenty = pcall(act.call, act, "get_CharacterEntity")
+            if not ok_e or aenty == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_a1, a1 = pcall(aenty.get_address, aenty)
+            local ok_a2, a2 = pcall(entity.get_address, entity)
+            if not ok_a1 or not ok_a2 or a1 ~= a2 then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_td2, td = pcall(act.get_type_definition, act)
+            local short = "?"
+            if ok_td2 and td ~= nil then
+                local okf, full = pcall(td.get_full_name, td)
+                if okf and type(full) == "string" then
+                    short = full:match("([^.]+)$") or full
+                end
+            end
+            if short:find("Attack", 1, true) then
+                travel_last, mov_hold = nil, 0
+                ring_push("act-enter:attack " .. short)
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if is_interaction_action(act) then
+                travel_last, mov_hold = nil, 0
+                ring_push("act-enter:interact " .. short)
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if is_loco_action_name(short) then
+                mov_hold = MOV_HOLD_FRAMES
+                travel_last = nil
+                layer_out = {} -- v2.3: force the write; game may have reset speeds
+                scale_layers(cfg.mov)
+                proof.last_source, proof.last_act = "doenter", short
+                local mo_k = player_motion()
+                local ly_k = mo_k and try_call(mo_k, "getLayer", 0) or nil
+                local bk = ly_k and try_call(ly_k, "get_MotionBankID") or nil
+                local mi = ly_k and try_call(ly_k, "get_MotionID") or nil
+                if type(bk) == "number" and type(mi) == "number" then
+                    proof.last_clip = clip_name_of(bk, mi) or "?"
+                else
+                    proof.last_clip = "?"
+                end
+                ring_push("kick:" .. short)
+            end
+            return sdk.PreHookResult.CALL_ORIGINAL
+        end)
+        L("doEnter kick-start hooked")
+    else
+        L("doEnter NOT FOUND - kick-start disabled, poll only")
+    end
+end
+
 local ui_threw = false
 re.on_draw_ui(function()
     local ok, err = pcall(function()
@@ -753,6 +870,8 @@ re.on_script_reset(function()
     cat_cache_addr, cat_cache_val = 0, nil
     travel_last, travel_t, mov_hold = nil, 0, 0
     mov_latched, mov_latched_mult, mov_rate_on = false, 1.0, false
+    last_bank, last_motid = nil, nil
+    proof.layer_speed = 0
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
