@@ -1,10 +1,17 @@
-// MoveSpeed v1.1 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
-// v1.1: vec3 writes are VERIFIED before use. v1.0 pinned the character
-// (animation fast, zero travel, movement only leaking on transitions) -
-// consistent with a silently-zero root-rate vector. Fresh-construction and
-// game-object-clone round-trips are self-tested; writes stay off (layers
-// only, character moves normally) until proven. Also samples the
-// sanctioned knobs get_OverrideMoveSpeed / get_MoveVectorInputRate.
+// MoveSpeed v1.3 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
+// v1.3 MONITOR MODE: the log proved set_OverrideMoveSpeed throws on invoke
+// and op_Multiply returns garbage - struct crossing is one-way (reads fine,
+// writes/recvs broken), so C# cannot drive travel. All C# writes OFF; Lua
+// movement is back in charge of speed. This build only watches: engage
+// tracing plus a float/int/bool field census of the entity+character while
+// moving, hunting a plain-numeric speed knob writable via SetDataBoxed.
+// v1.2: game log proved struct setters via IObject.Call silently no-op
+// (fresh vec reads 0,0,0; clone write of 7.25 reads back 1) - so the v1.0
+// pin is explained and direct vec construction is abandoned. Two struct-free
+// paths instead: (1) set_OverrideMoveSpeed(float) - if the game honors it,
+// it's the sanctioned, ramp-aware speed knob; (2) native op_Multiply on the
+// game's OWN rate object for loop travel. Both verified by readback; layers
+// carry on regardless. Boost stays off (needs arbitrary-vec construction).
 // Standalone movement scaler. Ports the Lua MoveSpeed v1.0 logic:
 // layer speed on every locomotion clip + root rate on Loop clips only,
 // 45-frame hold latch, doEnter kick-start, Sprint keywords, attack-recovery
@@ -28,7 +35,9 @@ using REFrameworkNET.Callbacks;
 public class MoveSpeed
 {
     const string ModId = "MoveSpeed";
-    const string Version = "1.1";
+    const string Version = "1.3";
+    // v1.3: monitor only - every write path below is gated on this.
+    const bool MonitorOnly = true;
     static readonly float[] Presets = { 1f, 1.5f, 2f, 3f };
 
     const int HoldFrames = 45;
@@ -71,6 +80,15 @@ public class MoveSpeed
     // stay off until a round-trip readback proves the primitive works.
     static bool _vecOk = false, _vecTriedClone = false;
     static float _ovrSpeed = float.NaN, _moveVecRate = float.NaN;
+    // v1.2 struct-free travel paths
+    static bool _ovrActive = false, _ovrDirty = false;
+    static float _ovrReadback = 0f;
+    static string _rateMode = "layers"; // layers | override | opmul
+    static bool _opTested = false;
+    static Method _opMul;
+    static float _rateRb = 0f;
+    // v1.3 census: numeric entity/character fields while moving
+    static readonly Dictionary<string, string> _probe = new();
     static int _errCount;
     static TypeDefinition _motionTd;
 
@@ -185,6 +203,8 @@ public class MoveSpeed
                 // NaN is not valid JSON: sanitize (0 = not sampled yet)
                 override_move = float.IsNaN(_ovrSpeed) ? 0f : _ovrSpeed,
                 movevec_rate = float.IsNaN(_moveVecRate) ? 0f : _moveVecRate,
+                ovr_readback = _ovrReadback, travel_mode = _rateMode, rate_readback = _rateRb,
+                monitor = true, probe = _probe,
             }));
         }
         catch (Exception ex) { LogOnce("proof: " + ex.Message); }
@@ -392,19 +412,32 @@ public class MoveSpeed
             if (_entity == null) return;
             if (want && mult > 1f)
             {
+                // v1.2: native-multiply path first (game-owned object throughout)
+                if (_rateMode == "opmul" && _opMul != null)
+                {
+                    OpApplyRate(mult);
+                    _rateOn = true; _rateMult = mult;
+                    return;
+                }
                 var v = RateVec(mult);
                 if (v != null) Call(_entity, "set_ActionRootTransRate", v);
                 _rateOn = true; _rateMult = mult;
             }
             else if (_rateOn)
             {
-                var r = Call(_entity, "get_ActionRootTransRate");
-                float x = float.NaN;
-                try { x = Convert.ToSingle((r as IObject).GetField("x")); } catch { }
-                if (!float.IsNaN(x) && Math.Abs(x - _rateMult) < 0.001f)
+                // v1.2: opmul restores exactly (cur*1); fresh-vec path keeps
+                // the readback-conditional restore (never writes blind).
+                if (_rateMode == "opmul" && _opMul != null) OpApplyRate(1f);
+                else
                 {
-                    var one = OneVec();
-                    if (one != null) Call(_entity, "set_ActionRootTransRate", one);
+                    var r = Call(_entity, "get_ActionRootTransRate");
+                    float x = float.NaN;
+                    try { x = Convert.ToSingle((r as IObject).GetField("x")); } catch { }
+                    if (!float.IsNaN(x) && Math.Abs(x - _rateMult) < 0.001f)
+                    {
+                        var one = OneVec();
+                        if (one != null) Call(_entity, "set_ActionRootTransRate", one);
+                    }
                 }
                 _rateOn = false;
             }
@@ -432,8 +465,152 @@ public class MoveSpeed
         }
         catch (Exception ex) { Log("vec selftest fresh fail: " + ex.Message); return false; }
     }
-    // Fallback: mutate the GAME's own rate object (proven layout), verify,
-    // restore. Runs once, on first latch (needs the entity).
+    // ---- v1.3 field census ----
+    // Enumerate plain-numeric fields of an object and snapshot values.
+    // Hunting a float/int speed knob writable via SetDataBoxed (method
+    // dispatch on structs is broken in this interop; raw field writes
+    // may be the only C# travel path left).
+    static void ProbeFloats(ManagedObject obj, string prefix)
+    {
+        try
+        {
+            if (obj == null) return;
+            ulong addr = Addr(obj);
+            if (addr == 0) return;
+            TypeDefinition td;
+            try { td = obj.GetTypeDefinition(); } catch { return; }
+            if (td == null) return;
+            System.Collections.IEnumerable fields;
+            try { fields = td.GetFields(); } catch { return; }
+            int n = 0;
+            foreach (var f in fields)
+            {
+                if (n >= 60) break;
+                if (!(f is Field ff)) continue;
+                string fn, ft;
+                try
+                {
+                    bool isStatic = false;
+                    try { isStatic = ff.IsStatic(); } catch { }
+                    if (isStatic) continue;
+                    fn = ff.Name;
+                    ft = ff.Type != null ? ff.Type.FullName : "?";
+                }
+                catch { continue; }
+                if (ft != "System.Single" && ft != "System.Double" && ft != "System.Int32"
+                    && ft != "System.UInt32" && ft != "System.Boolean") continue;
+                object v;
+                try { v = ff.GetDataBoxed(addr, false); } catch { continue; }
+                if (v == null) continue;
+                _probe[prefix + fn] = v.ToString();
+                n++;
+            }
+            while (_probe.Count > 140)
+            {
+                string first = null;
+                foreach (var k in _probe.Keys) { first = k; break; }
+                if (first == null) break;
+                _probe.Remove(first);
+            }
+        }
+        catch (Exception ex) { LogOnce("probe: " + ex.Message); }
+    }
+
+    // ---- v1.2 struct-free travel ----
+    // (1) Override knob: pure float, no vec3 involved. Written on engage,
+    // restored on release. Readback decides whether the game honors it.
+    static void ApplyOverride()
+    {
+        try
+        {
+            if (_entity == null) return;
+            Call(_entity, "set_OverrideMoveSpeed", _mov);
+            _ovrActive = true;
+            float rb = ToF(Call(_entity, "get_OverrideMoveSpeed"), float.NaN);
+            _ovrReadback = float.IsNaN(rb) ? 0f : rb;
+            Log($"override: wrote {_mov} readback {_ovrReadback}");
+            if (!float.IsNaN(rb) && Math.Abs(rb - _mov) < 0.01f && _rateMode == "layers")
+            {
+                _rateMode = "override";
+                Log("override HONORED by game - travel via sanctioned knob");
+            }
+        }
+        catch (Exception ex) { LogOnce("override apply: " + ex.Message); }
+    }
+    static void RestoreOverride()
+    {
+        try
+        {
+            if (!_ovrActive || _entity == null) { _ovrActive = false; return; }
+            Call(_entity, "set_OverrideMoveSpeed", 1f);
+            _ovrActive = false;
+            if (_rateMode == "override") _rateMode = "layers";
+        }
+        catch (Exception ex) { LogOnce("override restore: " + ex.Message); }
+    }
+    // (2) Native op_Multiply on the game's OWN rate object: no construction,
+    // no setters - the multiply happens natively. Verified by readback.
+    static void OpTestRate()
+    {
+        _opTested = true;
+        try
+        {
+            if (_entity == null) return;
+            var vecTd = API.GetTDB().FindType("via.vec3");
+            if (vecTd == null) { Log("opmul: via.vec3 missing"); return; }
+            Method found = null;
+            var methods = vecTd.GetMethods();
+            foreach (var m in methods)
+            {
+                Method mm = m as Method;
+                if (mm == null) continue;
+                if (mm.Name != "op_Multiply") continue;
+                uint n = 0;
+                try { n = mm.GetNumParams(); } catch { continue; }
+                if (n != 2) continue;
+                found = mm;
+                break;
+            }
+            if (found == null) { Log("opmul: op_Multiply(vec3,float) not found"); return; }
+            var cur = Call(_entity, "get_ActionRootTransRate");
+            if (cur == null) { Log("opmul: rate unreadable"); return; }
+            Log("opmul: built candidate, testing write+readback");
+            _opMul = found;
+            OpApplyRate(2f);
+            float rb = ReadRateX();
+            Log($"opmul: wrote 2x readback {rb}");
+            if (!float.IsNaN(rb) && Math.Abs(rb - 2f) < 0.05f)
+            {
+                _rateMode = "opmul";
+                Log("opmul HONORED - loop travel via native multiply");
+            }
+            // leave the game at whatever it had: restore x1 best-effort
+            OpApplyRate(1f);
+        }
+        catch (Exception ex) { Log("opmul test fail: " + ex.Message); }
+    }
+    static float ReadRateX()
+    {
+        try
+        {
+            var r = Call(_entity, "get_ActionRootTransRate");
+            if (r == null) return float.NaN;
+            return Convert.ToSingle((r as IObject).GetField("x"));
+        }
+        catch { return float.NaN; }
+    }
+    static void OpApplyRate(float mult)
+    {
+        try
+        {
+            if (_opMul == null || _entity == null) return;
+            var cur = Call(_entity, "get_ActionRootTransRate");
+            if (cur == null) return;
+            object vecObj = _opMul.InvokeBoxed(typeof(object), null, new object[] { cur, mult });
+            if (vecObj != null) Call(_entity, "set_ActionRootTransRate", vecObj);
+        }
+        catch (Exception ex) { LogOnce("opmul apply: " + ex.Message); }
+    }
     static bool SelfTestClone()
     {
         try
@@ -520,20 +697,40 @@ public class MoveSpeed
                 }
                 catch { }
                 // v1.1: sanctioned-knob diagnostics (reads only, never written here)
+                // v1.3: + numeric field census while latched (the actual hunt)
                 try
                 {
                     if (_entity != null)
                     {
                         _ovrSpeed = ToF(Call(_entity, "get_OverrideMoveSpeed"), float.NaN);
                         _moveVecRate = ToF(Call(_entity, "get_MoveVectorInputRate"), float.NaN);
+                        _rateRb = (float)Math.Round(ReadRateX(), 2);
+                        if (float.IsNaN(_rateRb)) _rateRb = 0f;
+                    }
+                    if (_hold > 0)
+                    {
+                        ProbeFloats(_entity, "e.");
+                        ProbeFloats(_chara, "c.");
                     }
                 }
                 catch { }
             }
+            // v1.2: preset changed mid-latch -> re-apply override immediately
+            // v1.3: monitor never writes; just consume the flag.
+            if (_ovrDirty)
+            {
+                _ovrDirty = false;
+                if (!MonitorOnly)
+                {
+                    if (_hold > 0) ApplyOverride();
+                    else RestoreOverride();
+                }
+            }
             if (!(_mov > 1f))
             {
-                if (_orig.Count > 0) RestoreLayers();
+                if (!MonitorOnly && _orig.Count > 0) RestoreLayers(); // v1.3: Lua owns layers
                 SyncRate(1f, false);
+                RestoreOverride(); // v1.2
                 _hasLast = false; _hasWrote = false; _hold = 0;
                 return;
             }
@@ -562,8 +759,9 @@ public class MoveSpeed
                 {
                     _hasLast = false; _hasWrote = false; _hold = 0;
                     _blocked = "attack";
-                    if (_orig.Count > 0) RestoreLayers();
+                    if (!MonitorOnly && _orig.Count > 0) RestoreLayers(); // v1.3: Lua owns layers
                     SyncRate(1f, false);
+                    RestoreOverride(); // v1.2
                     return;
                 }
                 _blocked = "attack-rec";
@@ -572,8 +770,9 @@ public class MoveSpeed
             {
                 _hasLast = false; _hasWrote = false; _hold = 0;
                 _blocked = "interact";
-                if (_orig.Count > 0) RestoreLayers();
+                if (!MonitorOnly && _orig.Count > 0) RestoreLayers(); // v1.3: Lua owns layers
                 SyncRate(1f, false);
+                RestoreOverride(); // v1.2
                 return;
             }
             if (_blocked != "attack-rec") _blocked = "-";
@@ -652,6 +851,11 @@ public class MoveSpeed
                         _lastSource = src;
                         _lastClip = ClipName(bank, mot) ?? "?";
                         _lastAct = aname ?? "?";
+                        if (!MonitorOnly) // v1.3: monitor never writes
+                        {
+                            ApplyOverride(); // sanctioned knob first
+                            if (!_opTested) OpTestRate(); // native-multiply test
+                        }
                     }
                     _hold = HoldFrames;
                 }
@@ -662,54 +866,15 @@ public class MoveSpeed
                 }
                 if (_hold > 0)
                 {
-                    // v1.1: one-time clone verification before any vec write.
-                    if (!_vecOk && !_vecTriedClone)
-                    {
-                        _vecTriedClone = true;
-                        _vecOk = SelfTestClone();
-                        Log("vec verdict: writes " + (_vecOk ? "ENABLED" : "DISABLED (layers only)"));
-                    }
-                    ScaleLayers(_mov);
-                    SyncRate(_mov, loopClip || (!locoClip && (moveAct || moving)));
-                    float boosted = 0f;
-                    bool hurt = HasKey(aname, HurtKeys);
-                    if (!hurt && bok && tf != null && posObj != null)
-                    {
-                        // CORRECTED boost: baseline is the last-WRITTEN pos,
-                        // so our own output can never feed back in.
-                        // v1.1: gated on verified vec construction.
-                        double gx = _hasWrote ? px - _wroteX : bdx;
-                        double gz = _hasWrote ? pz - _wroteZ : bdz;
-                        if (!_hasWrote) { gx = bdx; gz = bdz; }
-                        double gd = Math.Sqrt(gx * gx + gz * gz);
-                        if (gd > 0.0005 && _vecOk)
-                        {
-                            try
-                            {
-                                var vt = API.GetTDB().FindType("via.vec3").CreateValueType();
-                                var vi = vt as IObject;
-                                vi.Call("set_x", (float)(px + gx * (_mov - 1)));
-                                vi.Call("set_y", Convert.ToSingle((posObj as IObject).GetField("y")));
-                                vi.Call("set_z", (float)(pz + gz * (_mov - 1)));
-                                Call(tf, "set_Position", vt);
-                                _wroteX = px + gx * (_mov - 1);
-                                _wroteZ = pz + gz * (_mov - 1);
-                                _hasWrote = true;
-                                double dtb = now - _lastT;
-                                if (dtb > 0) boosted = (float)Math.Round(gd * _mov / dtb, 2);
-                            }
-                            catch (Exception ex) { LogOnce("boost: " + ex.Message); }
-                        }
-                        else { _wroteX = px; _wroteZ = pz; _hasWrote = true; }
-                    }
-                    else if (posObj != null) { _wroteX = px; _wroteZ = pz; _hasWrote = true; }
-                    else _hasWrote = false;
-                    _boosted = boosted;
+                    // v1.3 monitor: trace only. Sources/ring/proof updated
+                    // above; every write (layers, rate, boost, override)
+                    // belongs to the Lua script while monitoring.
                     return;
                 }
             }
-            if (_orig.Count > 0) RestoreLayers();
+            if (!MonitorOnly && _orig.Count > 0) RestoreLayers(); // v1.3: Lua owns layers
             SyncRate(1f, false);
+            RestoreOverride(); // v1.2
         }
         catch (Exception ex) { LogOnce("tick: " + ex.Message); }
     }
@@ -780,7 +945,7 @@ public class MoveSpeed
             _hold = HoldFrames;
             _hasLast = false;
             _out.Clear();
-            ScaleLayers(_mov);
+            if (!MonitorOnly) ScaleLayers(_mov); // v1.3: trace only
             _lastSource = "doenter"; _lastClip = "?"; _lastAct = short_;
             Ring("kick:" + short_);
         }
@@ -792,15 +957,16 @@ public class MoveSpeed
     {
         try
         {
-            if (!Hexa.NET.ImGui.ImGui.TreeNode("MoveSpeed v1.0 (C#)##MoveSpeedCS")) return;
+            if (!Hexa.NET.ImGui.ImGui.TreeNode("MoveSpeed v" + Version + " (C#)##MoveSpeedCS")) return;
             try
             {
-                Hexa.NET.ImGui.ImGui.TextUnformatted(_mov > 1f ? "ACTIVE: MOV " + Fmt(_mov) : "OFF");
+                Hexa.NET.ImGui.ImGui.TextUnformatted("MONITOR ONLY - speed by Lua script");
+                Hexa.NET.ImGui.ImGui.TextUnformatted(_mov > 1f ? "watching MOV " + Fmt(_mov) + " [" + _rateMode + "]" : "OFF");
                 for (int i = 0; i < Presets.Length; i++)
                 {
                     if (i > 0) Hexa.NET.ImGui.ImGui.SameLine();
                     string label = (_mov == Presets[i] ? "[" + Fmt(Presets[i]) + "]##" : Fmt(Presets[i]) + "##") + "mv" + i;
-                    if (Hexa.NET.ImGui.ImGui.Button(label)) { _mov = Presets[i]; SaveCfg(); _rateVecMult = float.NaN; }
+                    if (Hexa.NET.ImGui.ImGui.Button(label)) { _mov = Presets[i]; SaveCfg(); _rateVecMult = float.NaN; _ovrDirty = true; }
                 }
             }
             finally { Hexa.NET.ImGui.ImGui.TreePop(); }
@@ -833,8 +999,13 @@ public class MoveSpeed
     {
         try
         {
-            try { RestoreLayers(); } catch { }
-            try { SyncRate(1f, false); _rateOn = false; } catch { }
+            // v1.3 monitor: touch nothing on unload (Lua owns all state).
+            if (!MonitorOnly)
+            {
+                try { RestoreLayers(); } catch { }
+                try { SyncRate(1f, false); _rateOn = false; } catch { }
+                try { RestoreOverride(); } catch { }
+            }
             SaveCfg();
             try { WriteProof(); } catch { }
             _playerGo = _chara = _entity = _motion = null;
