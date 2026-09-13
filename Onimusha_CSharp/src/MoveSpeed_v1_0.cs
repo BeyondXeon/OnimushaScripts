@@ -1,0 +1,774 @@
+// MoveSpeed v1.0 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
+// Standalone movement scaler. Ports the Lua MoveSpeed v1.0 logic:
+// layer speed on every locomotion clip + root rate on Loop clips only,
+// 45-frame hold latch, doEnter kick-start, Sprint keywords, attack-recovery
+// gate, FasterInteractions exclusions. Travel assist is a CORRECTED
+// displacement boost: it measures from the last-WRITTEN position, so the
+// v2.4-style feedback runaway is impossible by construction.
+// Preset buttons: x1 / x1.5 / x2 / x3.
+//
+// Deploy: copy to <game>/reframework/plugins/source/MoveSpeed.cs (hot-reload,
+// no restart). Remove movement_speed_v1.0.lua from autorun while active.
+// Config: reframework/data/movement_cs.json. Proof: mov_proof_cs.json.
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using REFrameworkNET;
+using REFrameworkNET.Attributes;
+using REFrameworkNET.Callbacks;
+
+public class MoveSpeed
+{
+    const string ModId = "MoveSpeed";
+    const string Version = "1.0";
+    static readonly float[] Presets = { 1f, 1.5f, 2f, 3f };
+
+    const int HoldFrames = 45;
+    const float MinSpeed = 0.3f;
+    const float MaxStep = 0.5f;
+    const float RecAt = 0.6f;
+    const int MaxLayers = 64;
+
+    static readonly string[] LocoClipKeys = { "Walk", "Run", "Dash", "Sprint", "Jog", "Strafe", "Turn", "Step", "Move" };
+    static readonly string[] MotExclude = { "StepJump", "GenericFalling", "Falling", "NPC_", "Over_The_Fence", "Ladder", "Ledge", "Jump", "WallRun", "Guard", "Issen", "Bow", "QuickShot", "Tired" };
+    static readonly string[] MoveEnums = {
+        "app.plc_BaseMove_Mot.SetID", "app.plw_KatateMove_Mot.SetID",
+        "app.plw_RyoteMove_Mot.SetID", "app.plw_tree_Mot.SetID", "app.plw_SubWeapon_Mot.SetID" };
+    static readonly string[] ClimbKeys = { "Ladder", "Crawl", "GoThrough", "Climb", "Creep" };
+    static readonly string[] HurtKeys = { "Damage", "Guard", "Stagger", "Knock", "Death", "Fall", "Hurt" };
+
+    // ---- state ----
+    static float _mov = 1.0f;
+    static ManagedObject _playerGo, _chara, _entity, _motion;
+    static ulong _playerGoAddr;
+    static int _cooldown;
+    static readonly Dictionary<ulong, float> _orig = new();
+    static readonly Dictionary<ulong, float> _out = new();
+    static ulong _catAddr; static string _cat;
+    static readonly Dictionary<uint, Dictionary<uint, string>> _motNames = new();
+    static double _lastX, _lastZ, _lastT; static bool _hasLast;
+    static double _wroteX, _wroteZ; static bool _hasWrote;
+    static int _hold;
+    static uint _lastBank, _lastMot; static bool _hasClip;
+    static bool _rateOn; static float _rateMult;
+    static long _tick;
+    static readonly List<string> _ring = new();
+    static string _lastSource = "-", _lastClip = "?", _lastAct = "?";
+    static string _blocked = "-";
+    static float _layerSpeed, _movSpeed, _boosted;
+    static string _cfgPath = "", _proofPath = "";
+    static object _oneVec, _rateVec; static float _rateVecMult = float.NaN;
+    static int _errCount;
+    static TypeDefinition _motionTd;
+
+    // ---- helpers ----
+    static void Log(string m) { try { API.LogInfo("[MoveSpeed] " + m); } catch { } }
+    static void LogOnce(string m) { if (_errCount < 20) { _errCount++; Log(m); } }
+
+    static ManagedObject Obj(object o) { return o as ManagedObject; }
+    static object Call(ManagedObject o, string name, params object[] a)
+    {
+        try { return (o as IObject)?.Call(name, a); } catch { return null; }
+    }
+    static float ToF(object o, float dflt)
+    {
+        try { return o == null ? dflt : Convert.ToSingle(o); } catch { return dflt; }
+    }
+    static uint ToU(object o, uint dflt)
+    {
+        try { return o == null ? dflt : Convert.ToUInt32(o); } catch { return dflt; }
+    }
+    static int ToI(object o, int dflt)
+    {
+        try { return o == null ? dflt : Convert.ToInt32(o); } catch { return dflt; }
+    }
+    static ulong Addr(ManagedObject o)
+    {
+        try { return o == null ? 0 : o.GetAddress(); } catch { return 0; }
+    }
+    static void Ring(string ev)
+    {
+        try
+        {
+            _ring.Add(_tick + ":" + ev);
+            while (_ring.Count > 20) _ring.RemoveAt(0);
+        }
+        catch { }
+    }
+    static string TypeName(ManagedObject o)
+    {
+        try
+        {
+            var td = o?.GetTypeDefinition();
+            return td == null ? "?" : td.FullName;
+        }
+        catch { return "?"; }
+    }
+    static string ShortName(string full)
+    {
+        if (string.IsNullOrEmpty(full)) return "?";
+        int i = full.LastIndexOf('.');
+        return i < 0 ? full : full.Substring(i + 1);
+    }
+    static bool HasKey(string n, string[] keys)
+    {
+        if (string.IsNullOrEmpty(n)) return false;
+        foreach (var k in keys) if (n.Contains(k)) return true;
+        return false;
+    }
+
+    static string CfgDir()
+    {
+        try
+        {
+            var pluginPath = API.GetPluginDirectory(typeof(MoveSpeed).Assembly);
+            var dir = new DirectoryInfo(pluginPath ?? Environment.CurrentDirectory);
+            while (dir != null && !string.Equals(dir.Name, "reframework", StringComparison.OrdinalIgnoreCase))
+                dir = dir.Parent;
+            return dir != null ? Path.Combine(dir.FullName, "data")
+                : Path.Combine(Environment.CurrentDirectory, "reframework", "data");
+        }
+        catch { return Environment.CurrentDirectory; }
+    }
+
+    static void LoadCfg()
+    {
+        try
+        {
+            if (File.Exists(_cfgPath))
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(_cfgPath));
+                if (doc.RootElement.TryGetProperty("mov", out var v) && v.ValueKind == JsonValueKind.Number)
+                    _mov = Math.Max(1f, Math.Min(3f, (float)v.GetDouble()));
+                return;
+            }
+            string old = Path.Combine(Path.GetDirectoryName(_cfgPath) ?? "", "damage_attack_speed.json");
+            if (File.Exists(old))
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(old));
+                if (doc.RootElement.TryGetProperty("mov", out var v) && v.ValueKind == JsonValueKind.Number)
+                    _mov = Math.Max(1f, Math.Min(3f, (float)v.GetDouble()));
+            }
+            SaveCfg();
+        }
+        catch (Exception ex) { LogOnce("cfg load: " + ex.Message); }
+    }
+    static void SaveCfg()
+    {
+        try { File.WriteAllText(_cfgPath, JsonSerializer.Serialize(new { mov = _mov })); }
+        catch (Exception ex) { LogOnce("cfg save: " + ex.Message); }
+    }
+    static void WriteProof()
+    {
+        try
+        {
+            File.WriteAllText(_proofPath, JsonSerializer.Serialize(new
+            {
+                version = Version, tick = _tick, mov = _mov,
+                entity = _entity != null, hold = _hold, latched = _hold > 0,
+                blocked = _blocked, speed = _movSpeed, boosted = _boosted,
+                last_source = _lastSource, last_clip = _lastClip, last_act = _lastAct,
+                ring = _ring.ToArray(), layer_speed = _layerSpeed,
+            }));
+        }
+        catch (Exception ex) { LogOnce("proof: " + ex.Message); }
+    }
+
+    // ---- resolve ----
+    static bool ResolvePlayer()
+    {
+        try
+        {
+            if (_cooldown > 0) { _cooldown--; return _entity != null; }
+            _cooldown = 60;
+            var pm = API.GetManagedSingleton("app.PlayerManager");
+            var mi = Obj(Call(pm, "getControllingPlayer"));
+            var go = mi == null ? null : Obj(Call(mi, "get_Object"));
+            if (go == null) return false;
+            ulong a = Addr(go);
+            if (_playerGo == null || a != _playerGoAddr)
+            {
+                _playerGo = go; _playerGoAddr = a;
+                _chara = _entity = _motion = null;
+                _out.Clear(); _catAddr = 0; _cat = null;
+            }
+            _chara = mi == null ? null : Obj(Call(mi, "get_Character"));
+            _entity = mi == null ? null : Obj(Call(mi, "get_CharacterEntity"));
+            return _entity != null;
+        }
+        catch { return _entity != null; }
+    }
+
+    static ManagedObject PlayerMotion()
+    {
+        try
+        {
+            if (_playerGo == null) return null;
+            if (_motion != null && Addr(_motion) == 0) _motion = null;
+            if (_motion == null)
+            {
+                if (_motionTd == null)
+                {
+                    try { _motionTd = API.GetTDB().FindType("via.motion.Motion"); }
+                    catch (Exception ex) { LogOnce("motion type: " + ex.Message); return null; }
+                    if (_motionTd == null) { LogOnce("via.motion.Motion not in TDB"); return null; }
+                }
+                var sysType = _motionTd.RuntimeType;
+                _motion = Obj(Call(_playerGo, "getComponent", sysType));
+            }
+            return _motion;
+        }
+        catch { return null; }
+    }
+
+    static void BuildMotNames()
+    {
+        try
+        {
+            var tdb = API.GetTDB();
+            int n = 0;
+            foreach (var ename in MoveEnums)
+            {
+                TypeDefinition td;
+                try { td = tdb.FindType(ename); } catch { continue; }
+                if (td == null) continue;
+                System.Collections.IEnumerable fields;
+                try { fields = td.GetFields(); } catch { continue; }
+                foreach (var f in fields)
+                {
+                    if (!(f is Field ff)) continue;
+                    string fname;
+                    try { fname = ff.Name; } catch { continue; }
+                    if (fname == "value__") continue;
+                    object v;
+                    try { v = ff.GetDataBoxed(0, false); } catch { continue; }
+                    if (!(v is uint) && !(v is int)) continue;
+                    uint num = v is uint ? (uint)v : (uint)(int)v;
+                    uint bank = num / 4096, id = num % 4096;
+                    if (!_motNames.TryGetValue(bank, out var t2)) { t2 = new Dictionary<uint, string>(); _motNames[bank] = t2; }
+                    // field name looks like "Dash_Start_Front_L_A" value label; store it
+                    t2[id] = fname;
+                    n++;
+                }
+            }
+            Log("clip names loaded: " + n);
+        }
+        catch (Exception ex) { LogOnce("motnames: " + ex.Message); }
+    }
+
+    static string ClipName(uint bank, uint id)
+    {
+        try
+        {
+            if (_motNames.TryGetValue(bank, out var t) && t.TryGetValue(id, out var n)) return n;
+        }
+        catch { }
+        return null;
+    }
+    static bool IsLocoClip(string name)
+    {
+        if (name == null || HasKey(name, MotExclude)) return false;
+        return HasKey(name, LocoClipKeys);
+    }
+
+    // ---- layers ----
+    static void ForEachLayer(Action<ManagedObject> fn)
+    {
+        var mo = PlayerMotion();
+        if (mo == null) return;
+        foreach (var pair in new[] { new[] { "getLayerCount", "getLayer" }, new[] { "getPrivateLayerCount", "getPrivateLayer" } })
+        {
+            int count = ToI(Call(mo, pair[0]), 0);
+            if (count > MaxLayers) count = MaxLayers;
+            for (int i = 0; i < count; i++)
+            {
+                var layer = Obj(Call(mo, pair[1], i));
+                if (layer != null) { try { fn(layer); } catch { } }
+            }
+        }
+    }
+    static void ScaleLayers(float mult)
+    {
+        ForEachLayer(layer =>
+        {
+            ulong a = Addr(layer);
+            if (!_orig.TryGetValue(a, out float o))
+            {
+                o = ToF(Call(layer, "get_Speed"), float.NaN);
+                if (float.IsNaN(o)) return;
+                _orig[a] = o;
+            }
+            if (o > 0 && (!_out.TryGetValue(a, out float w) || w != mult))
+            {
+                try { Call(layer, "set_Speed", o * mult); _out[a] = mult; } catch { }
+            }
+        });
+    }
+    static void RestoreLayers()
+    {
+        try
+        {
+            var mo = PlayerMotion();
+            foreach (var kv in new Dictionary<ulong, float>(_orig))
+            {
+                ManagedObject found = null;
+                if (mo != null)
+                {
+                    foreach (var pair in new[] { new[] { "getLayerCount", "getLayer" }, new[] { "getPrivateLayerCount", "getPrivateLayer" } })
+                    {
+                        int count = ToI(Call(mo, pair[0]), 0);
+                        if (count > MaxLayers) count = MaxLayers;
+                        for (int i = 0; i < count && found == null; i++)
+                        {
+                            var l = Obj(Call(mo, pair[1], i));
+                            if (l != null && Addr(l) == kv.Key) found = l;
+                        }
+                        if (found != null) break;
+                    }
+                }
+                if (found != null) { try { Call(found, "set_Speed", kv.Value); } catch { } }
+                _orig.Remove(kv.Key); _out.Remove(kv.Key);
+            }
+        }
+        catch (Exception ex) { LogOnce("restore: " + ex.Message); }
+    }
+
+    // ---- root rate ----
+    static object RateVec(float mult)
+    {
+        try
+        {
+            if (_rateVec == null || _rateVecMult != mult)
+            {
+                var vt = API.GetTDB().FindType("via.vec3").CreateValueType();
+                (vt as IObject).Call("set_x", mult);
+                (vt as IObject).Call("set_y", mult);
+                (vt as IObject).Call("set_z", mult);
+                _rateVec = vt; _rateVecMult = mult;
+            }
+            return _rateVec;
+        }
+        catch (Exception ex) { LogOnce("ratevec: " + ex.Message); return null; }
+    }
+    static object OneVec()
+    {
+        try
+        {
+            if (_oneVec == null)
+            {
+                var vt = API.GetTDB().FindType("via.vec3").CreateValueType();
+                (vt as IObject).Call("set_x", 1f);
+                (vt as IObject).Call("set_y", 1f);
+                (vt as IObject).Call("set_z", 1f);
+                _oneVec = vt;
+            }
+            return _oneVec;
+        }
+        catch (Exception ex) { LogOnce("onevec: " + ex.Message); return null; }
+    }
+    static void SyncRate(float mult, bool want)
+    {
+        try
+        {
+            if (_entity == null) return;
+            if (want && mult > 1f)
+            {
+                var v = RateVec(mult);
+                if (v != null) Call(_entity, "set_ActionRootTransRate", v);
+                _rateOn = true; _rateMult = mult;
+            }
+            else if (_rateOn)
+            {
+                var r = Call(_entity, "get_ActionRootTransRate");
+                float x = float.NaN;
+                try { x = Convert.ToSingle((r as IObject).GetField("x")); } catch { }
+                if (!float.IsNaN(x) && Math.Abs(x - _rateMult) < 0.001f)
+                {
+                    var one = OneVec();
+                    if (one != null) Call(_entity, "set_ActionRootTransRate", one);
+                }
+                _rateOn = false;
+            }
+        }
+        catch (Exception ex) { LogOnce("rate: " + ex.Message); }
+    }
+
+    // ---- action classify ----
+    static ManagedObject CurrentAction()
+    {
+        try { return _chara == null ? null : Obj(Call(_chara, "get_BaseCurrentAction")); }
+        catch { return null; }
+    }
+    static string ActionCategory(ManagedObject act, out string shortName)
+    {
+        shortName = "?";
+        try
+        {
+            if (act == null) return null;
+            ulong a = Addr(act);
+            if (a != 0 && a == _catAddr) { shortName = _lastActName; return _cat; }
+            string full = TypeName(act);
+            string n = ShortName(full);
+            shortName = n;
+            string c = null;
+            if (n.Contains("Attack")) c = "attack";
+            else if (HasKey(n, LocoClipKeys)) c = "move";
+            else c = "other";
+            if (a != 0) { _catAddr = a; _cat = c; _lastActName = n; }
+            return c;
+        }
+        catch { return null; }
+    }
+    static string _lastActName = "?";
+    static bool IsInteraction(ManagedObject act)
+    {
+        try
+        {
+            if (act == null) return false;
+            var td = act.GetTypeDefinition();
+            if (td == null) return false;
+            if (td.IsDerivedFrom("app.PlayerCommonAction.cLadderActionBase")) return true;
+            if (td.IsDerivedFrom("app.PlayerCommonAction.cCreepBase")) return true;
+            if (td.IsDerivedFrom("app.PlayerCommonAction.cGoThroughBase")) return true;
+            if (td.IsDerivedFrom("app.PlayerCommonAction.cInteractGimmickBase")) return true;
+            string full = td.FullName;
+            if (!string.IsNullOrEmpty(full) && full.Contains("DemonTendon")) return true;
+            return false;
+        }
+        catch { return false; }
+    }
+
+    static double Now() { return Environment.TickCount64 / 1000.0; }
+
+    // ---- per-frame ----
+    static void TickPre()
+    {
+        try
+        {
+            _tick++;
+            if (_tick % 600 == 0) WriteProof();
+            if (_tick % 60 == 0 && _hold > 0)
+            {
+                try
+                {
+                    var mo = PlayerMotion();
+                    var ly = mo == null ? null : Obj(Call(mo, "getLayer", 0));
+                    if (ly != null) _layerSpeed = (float)Math.Round(ToF(Call(ly, "get_Speed"), 0f), 2);
+                }
+                catch { }
+            }
+            if (!(_mov > 1f))
+            {
+                if (_orig.Count > 0) RestoreLayers();
+                SyncRate(1f, false);
+                _hasLast = false; _hasWrote = false; _hold = 0;
+                return;
+            }
+            if (!ResolvePlayer()) { _hasLast = false; return; }
+            if (_playerGo != null && Addr(_playerGo) != _playerGoAddr)
+            {
+                RestoreLayers();
+                _motion = null;
+                _hasLast = false; _hasWrote = false; _hold = 0;
+                return;
+            }
+            var act = CurrentAction();
+            string aname;
+            string cat = ActionCategory(act, out aname);
+            if (cat == "attack")
+            {
+                float rec = float.NaN;
+                try
+                {
+                    var mo = PlayerMotion();
+                    var ly = mo == null ? null : Obj(Call(mo, "getLayer", 0));
+                    if (ly != null) rec = ToF(Call(ly, "get_NormalizeTime"), float.NaN);
+                }
+                catch { }
+                if (float.IsNaN(rec) || rec < RecAt)
+                {
+                    _hasLast = false; _hasWrote = false; _hold = 0;
+                    _blocked = "attack";
+                    if (_orig.Count > 0) RestoreLayers();
+                    SyncRate(1f, false);
+                    return;
+                }
+                _blocked = "attack-rec";
+            }
+            if (act != null && IsInteraction(act))
+            {
+                _hasLast = false; _hasWrote = false; _hold = 0;
+                _blocked = "interact";
+                if (_orig.Count > 0) RestoreLayers();
+                SyncRate(1f, false);
+                return;
+            }
+            if (_blocked != "attack-rec") _blocked = "-";
+
+            // engage sources
+            bool locoClip = false, loopClip = false;
+            uint bank = 0, mot = 0;
+            try
+            {
+                var mo = PlayerMotion();
+                var ly = mo == null ? null : Obj(Call(mo, "getLayer", 0));
+                if (ly != null)
+                {
+                    bank = ToU(Call(ly, "get_MotionBankID"), uint.MaxValue);
+                    mot = ToU(Call(ly, "get_MotionID"), uint.MaxValue);
+                    if (bank != uint.MaxValue && mot != uint.MaxValue)
+                    {
+                        if (!_hasClip || bank != _lastBank || mot != _lastMot)
+                        {
+                            _lastBank = bank; _lastMot = mot; _hasClip = true;
+                            _out.Clear(); // force rewrite on clip change
+                        }
+                        string cn = ClipName(bank, mot);
+                        locoClip = IsLocoClip(cn);
+                        loopClip = cn != null && cn.Contains("Loop");
+                    }
+                }
+            }
+            catch (Exception ex) { LogOnce("clip: " + ex.Message); }
+            bool moveAct = HasKey(aname, LocoClipKeys);
+            bool climbing = HasKey(aname, ClimbKeys);
+            bool moving = false, bok = false;
+            double bdx = 0, bdz = 0;
+            double now = Now();
+            ManagedObject tf = null; object posObj = null;
+            float px = 0, pz = 0;
+            try
+            {
+                tf = _playerGo == null ? null : Obj(Call(_playerGo, "get_Transform"));
+                posObj = tf == null ? null : Call(tf, "get_Position");
+                var pv = posObj as IObject;
+                if (pv != null)
+                {
+                    px = Convert.ToSingle(pv.GetField("x"));
+                    pz = Convert.ToSingle(pv.GetField("z"));
+                    if (_hasLast)
+                    {
+                        double dx = px - _lastX, dz = pz - _lastZ;
+                        double dist = Math.Sqrt(dx * dx + dz * dz);
+                        double dt = now - _lastT;
+                        if (dt > 0 && dt < 1.0 && dist < MaxStep)
+                        {
+                            moving = dist / dt > MinSpeed;
+                            bdx = dx; bdz = dz; bok = true;
+                            _movSpeed = (float)Math.Round(dist / dt, 2);
+                        }
+                    }
+                    _lastX = px; _lastZ = pz; _lastT = now; _hasLast = true;
+                }
+                else _hasLast = false;
+            }
+            catch (Exception ex) { LogOnce("travel: " + ex.Message); _hasLast = false; }
+
+            if (climbing)
+            {
+                _hasLast = false; _hasWrote = false; _hold = 0;
+            }
+            else
+            {
+                if (locoClip || moveAct || moving)
+                {
+                    string src = locoClip ? "clip" : (moveAct ? "action" : "travel");
+                    if (_hold <= 0)
+                    {
+                        Ring("engage:" + src);
+                        _lastSource = src;
+                        _lastClip = ClipName(bank, mot) ?? "?";
+                        _lastAct = aname ?? "?";
+                    }
+                    _hold = HoldFrames;
+                }
+                else if (_hold > 0)
+                {
+                    _hold--;
+                    if (_hold == 0) Ring("release");
+                }
+                if (_hold > 0)
+                {
+                    ScaleLayers(_mov);
+                    SyncRate(_mov, loopClip || (!locoClip && (moveAct || moving)));
+                    float boosted = 0f;
+                    bool hurt = HasKey(aname, HurtKeys);
+                    if (!hurt && bok && tf != null && posObj != null)
+                    {
+                        // CORRECTED boost: baseline is the last-WRITTEN pos,
+                        // so our own output can never feed back in.
+                        double gx = _hasWrote ? px - _wroteX : bdx;
+                        double gz = _hasWrote ? pz - _wroteZ : bdz;
+                        if (!_hasWrote) { gx = bdx; gz = bdz; }
+                        double gd = Math.Sqrt(gx * gx + gz * gz);
+                        if (gd > 0.0005)
+                        {
+                            try
+                            {
+                                var vt = API.GetTDB().FindType("via.vec3").CreateValueType();
+                                var vi = vt as IObject;
+                                vi.Call("set_x", (float)(px + gx * (_mov - 1)));
+                                vi.Call("set_y", Convert.ToSingle((posObj as IObject).GetField("y")));
+                                vi.Call("set_z", (float)(pz + gz * (_mov - 1)));
+                                Call(tf, "set_Position", vt);
+                                _wroteX = px + gx * (_mov - 1);
+                                _wroteZ = pz + gz * (_mov - 1);
+                                _hasWrote = true;
+                                double dtb = now - _lastT;
+                                if (dtb > 0) boosted = (float)Math.Round(gd * _mov / dtb, 2);
+                            }
+                            catch (Exception ex) { LogOnce("boost: " + ex.Message); }
+                        }
+                        else { _wroteX = px; _wroteZ = pz; _hasWrote = true; }
+                    }
+                    else if (posObj != null) { _wroteX = px; _wroteZ = pz; _hasWrote = true; }
+                    else _hasWrote = false;
+                    _boosted = boosted;
+                    return;
+                }
+            }
+            if (_orig.Count > 0) RestoreLayers();
+            SyncRate(1f, false);
+        }
+        catch (Exception ex) { LogOnce("tick: " + ex.Message); }
+    }
+
+    static void TickPost()
+    {
+        try
+        {
+            if (!_rateOn || _entity == null) return;
+            if (!(_rateMult > 1f)) return;
+            var v = RateVec(_rateMult);
+            if (v != null) Call(_entity, "set_ActionRootTransRate", v);
+        }
+        catch { }
+    }
+
+    // ---- doEnter kick (dynamic hook; poll covers us if install fails) ----
+    static void InstallKick()
+    {
+        try
+        {
+            var td = API.GetTDB().FindType("app.PlayerActionBase.cPlayerActionBase");
+            if (td == null) { Log("doEnter type missing - kick disabled, poll only"); return; }
+            var m = td.GetMethod("doEnter");
+            if (m == null) { Log("doEnter missing - kick disabled, poll only"); return; }
+            var hook = m.AddHook(false);
+            hook.AddPre(args =>
+            {
+                try { OnActionEnter(args); } catch (Exception ex) { LogOnce("kick: " + ex.Message); }
+                return PreHookResult.Continue;
+            });
+            Log("doEnter kick-start hooked");
+        }
+        catch (Exception ex) { Log("kick install failed (poll only): " + ex.Message); }
+    }
+
+    static void OnActionEnter(Span<ulong> args)
+    {
+        if (!(_mov > 1f)) return;
+        if (args.Length < 2) return;
+        var act = ManagedObject.ToManagedObject(args[1]);
+        if (act == null) return;
+        if (!ResolvePlayer() || _entity == null) return;
+        ulong ae = 0, ee = 0;
+        try
+        {
+            var aenty = Obj((act as IObject).Call("get_CharacterEntity"));
+            if (aenty == null) return;
+            ae = Addr(aenty); ee = Addr(_entity);
+        }
+        catch { return; }
+        if (ae == 0 || ae != ee) return;
+        string short_ = ShortName(TypeName(act));
+        if (short_.Contains("Attack"))
+        {
+            _hasLast = false; _hasWrote = false; _hold = 0;
+            Ring("act-enter:attack " + short_);
+            return;
+        }
+        if (IsInteraction(act))
+        {
+            _hasLast = false; _hasWrote = false; _hold = 0;
+            Ring("act-enter:interact " + short_);
+            return;
+        }
+        if (HasKey(short_, LocoClipKeys))
+        {
+            _hold = HoldFrames;
+            _hasLast = false;
+            _out.Clear();
+            ScaleLayers(_mov);
+            _lastSource = "doenter"; _lastClip = "?"; _lastAct = short_;
+            Ring("kick:" + short_);
+        }
+    }
+
+    // ---- ui ----
+    static string Fmt(float v) { return "x" + (v == Math.Floor(v) ? ((int)v).ToString() : v.ToString()); }
+    static void DrawUI()
+    {
+        try
+        {
+            if (!Hexa.NET.ImGui.ImGui.TreeNode("MoveSpeed v1.0 (C#)##MoveSpeedCS")) return;
+            try
+            {
+                Hexa.NET.ImGui.ImGui.TextUnformatted(_mov > 1f ? "ACTIVE: MOV " + Fmt(_mov) : "OFF");
+                for (int i = 0; i < Presets.Length; i++)
+                {
+                    if (i > 0) Hexa.NET.ImGui.ImGui.SameLine();
+                    string label = (_mov == Presets[i] ? "[" + Fmt(Presets[i]) + "]##" : Fmt(Presets[i]) + "##") + "mv" + i;
+                    if (Hexa.NET.ImGui.ImGui.Button(label)) { _mov = Presets[i]; SaveCfg(); _rateVecMult = float.NaN; }
+                }
+            }
+            finally { Hexa.NET.ImGui.ImGui.TreePop(); }
+        }
+        catch (Exception ex) { LogOnce("ui: " + ex.Message); }
+    }
+
+    // ---- lifecycle ----
+    [PluginEntryPoint]
+    public static void Main()
+    {
+        try
+        {
+            string dir = CfgDir();
+            try { Directory.CreateDirectory(dir); } catch { }
+            _cfgPath = Path.Combine(dir, "movement_cs.json");
+            _proofPath = Path.Combine(dir, "mov_proof_cs.json");
+            LoadCfg();
+            BuildMotNames();
+            InstallKick();
+            Log("loaded v" + Version + " mov=" + _mov);
+        }
+        catch (Exception ex) { Log("fatal: " + ex.Message); }
+    }
+
+    [PluginExitPoint]
+    public static void OnUnload()
+    {
+        try
+        {
+            try { RestoreLayers(); } catch { }
+            try { SyncRate(1f, false); _rateOn = false; } catch { }
+            SaveCfg();
+            try { WriteProof(); } catch { }
+            _playerGo = _chara = _entity = _motion = null;
+            _orig.Clear(); _out.Clear();
+            Log("unloaded");
+        }
+        catch { }
+    }
+
+    [Callback(typeof(UpdateMotion), CallbackType.Pre)]
+    public static void OnPreMotion() { TickPre(); }
+
+    [Callback(typeof(UpdateMotion), CallbackType.Post)]
+    public static void OnPostMotion() { TickPost(); }
+
+    [Callback(typeof(ImGuiDrawUI), CallbackType.Post)]
+    public static void OnDrawUI() { DrawUI(); }
+}
