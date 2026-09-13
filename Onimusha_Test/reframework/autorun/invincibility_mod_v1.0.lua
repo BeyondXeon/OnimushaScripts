@@ -1,7 +1,5 @@
--- Invincibility v1.30 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v1.30: perf pass, no behavior change. Restore-engine walk 3rd tick ->
--- 6th tick (halves its game calls; 100ms restore latency is invisible on
--- bars, HP refill still runs every frame) and HP readout 15 -> 30 ticks.
+-- Invincibility v1.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- Consolidated stable (was v1.30).
 --
 -- v1.29: Stagger Bar is fully independent. Off disables invincibility but
 -- leaves the tickbox alone; the bar stays pinned until unticked. No Hit /
@@ -10,7 +8,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Invincibility v1.30".
 -- Config: reframework/data/invincibility_mod.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "Invincibility", "1.30", "invincibility_mod.json"
+local MOD, VERSION, CFG_FILE = "Invincibility", "1.0", "invincibility_mod.json"
 local PROOF_FILE = "poise_proof.json"
 local TAG = "[" .. MOD .. "] "
 local GUARD_RETRY_TICKS = 300

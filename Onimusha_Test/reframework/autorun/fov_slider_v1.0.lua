@@ -1,5 +1,5 @@
--- FOV Slider v1.2 -- Onimusha: Way of the Sword, REFramework Lua autorun.
---
+-- FOV Slider v1.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- Consolidated stable (was v1.2).
 -- v1.2: the fight persisted, so the per-frame writer is not Camera.set_FOV.
 -- Three changes: (1) hook via.render.Renderer.set_Fov as well - the visible
 -- projection may be driven there; (2) both hooks rewrite ONLY writes near
@@ -10,7 +10,7 @@
 -- Menu: REFramework -> ScriptRunner -> "FOVSlider v1.2".
 -- Config: reframework/data/fov_slider.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "FOVSlider", "1.2", "fov_slider.json"
+local MOD, VERSION, CFG_FILE = "FOVSlider", "1.0", "fov_slider.json"
 local TAG = "[" .. MOD .. "] "
 local FOV_MIN, FOV_MAX = 30.0, 120.0
 

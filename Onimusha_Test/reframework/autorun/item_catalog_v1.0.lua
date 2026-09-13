@@ -1,5 +1,5 @@
--- Item Catalog Prober v1.4 -- Onimusha: Way of the Sword, REFramework Lua autorun.
---
+-- Item Catalog Prober v1.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- Consolidated stable (was v1.4).
 -- Read-only census, exhaustive. getItemFullName answers every ID; unused IDs
 -- return the "name not set" placeholder. v1.4 sweeps 1-1000000, storing ONLY
 -- real entries. Chunked across frames with progress + elapsed time; Stop
@@ -7,7 +7,7 @@
 --
 -- Menu: REFramework -> ScriptRunner -> "ItemCatalog v1.4".
 
-local MOD, VERSION = "ItemCatalog", "1.4"
+local MOD, VERSION = "ItemCatalog", "1.0"
 local TAG = "[" .. MOD .. "] "
 local OUT_FILE = "item_catalog.json"
 local ID_MIN, ID_MAX, CHUNK = 1, 1000000, 2000

@@ -1,5 +1,5 @@
--- Item Giver v1.9 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v1.9: picker rows read "Name [id] - Held X, Storehouse Y" (no prefix).
+-- Item Giver v1.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- Consolidated stable (was v1.9).
 --
 -- Grants through the live helper (SaveDataManager -> get_Helper -> get__Item):
 --   "To Box"  storage (pick it up at any box menu in-game).
@@ -11,7 +11,7 @@
 --
 -- Menu: REFramework -> ScriptRunner -> "ItemGiver v1.9".
 
-local MOD, VERSION = "ItemGiver", "1.9"
+local MOD, VERSION = "ItemGiver", "1.0"
 local TAG = "[" .. MOD .. "] "
 
 local function L(msg) log.info(TAG .. tostring(msg)) end
