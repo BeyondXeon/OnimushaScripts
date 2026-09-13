@@ -33,6 +33,13 @@ Developer/diagnostic tools (not gameplay mods): `param_dump_v1.0.lua` (full para
 - Interaction actions (doors, chests, ladders, crawl, gaps) are left to FasterInteractions-style mods; this collection doesn't fight them.
 - Turning any mod to x1/Off restores everything it changed (layers, rates, flags) and verifies a clean state.
 
+## Known issues
+
+- **Sprint ramp-up (MoveSpeed).** Sprint starts (`DashStart` transitions) are velocity-gated by the game: the state exits when your body is fast enough, and that ramp runs on physics time, so clip/rate scaling can't shorten it much. Sprint chained straight out of an attack feels it most (~0.5–1s). Walk/run engage at near-full speed immediately. No fix in-mod; sprint from neutral and hold it.
+- **Two attack-speed mods installed.** The game folder currently contains both the third-party `AttackSpeed.lua` (PlaySpeed windows) and this collection's `attack_speed_v1.0.lua` (motion layers). Both speed up swings and can stack on the same attack. If swings feel double-timed, remove one.
+- **Travel readout is a rolling average.** The menu's Travel m/s blends acceleration, turns, and stops. For the true multiplier, sprint straight for several seconds and read PEAK.
+- **If Off ever feels slow (MoveSpeed).** The menu's `Off check` line reads back the real layer/rate values after restore (`layer=1 rate=1` is clean). Paste those two numbers plus `mov_proof.json` if vanilla feel doesn't return at x1.0.
+
 ## Repo layout
 
 - `Onimusha_Test/reframework/autorun/` — the live, stable scripts (this README documents these)
