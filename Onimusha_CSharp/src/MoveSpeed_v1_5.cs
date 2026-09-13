@@ -1,10 +1,14 @@
-// MoveSpeed v1.3 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
-// v1.3 MONITOR MODE: the log proved set_OverrideMoveSpeed throws on invoke
-// and op_Multiply returns garbage - struct crossing is one-way (reads fine,
-// writes/recvs broken), so C# cannot drive travel. All C# writes OFF; Lua
-// movement is back in charge of speed. This build only watches: engage
-// tracing plus a float/int/bool field census of the entity+character while
-// moving, hunting a plain-numeric speed knob writable via SetDataBoxed.
+// MoveSpeed v1.5 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
+// v1.5 MONITOR: v1.4 census found only flags in entity + 5 supporters
+// (but did surface MoveSupporter._IsSuperDash). This build logs method
+// signatures for the vacuum system (requestVacuum/checkVacuum/vacuumMove)
+// and SuperDash accessors at load - no game state needed, no writes.
+// If a travel-relevant method takes only floats, v1.6 will test-write it.
+// v1.4 MONITOR: v1.3 census showed the entity itself holds almost no
+// numerics (24 fields, mostly flags) - the live state sits in supporter
+// sub-objects. This build snapshots MoveSupporter, InputStateSupporter,
+// MoveCancelChecker, TerrainSupporter and LockOnSupporter fields while
+// moving. Still zero writes; Lua owns speed.
 // v1.2: game log proved struct setters via IObject.Call silently no-op
 // (fresh vec reads 0,0,0; clone write of 7.25 reads back 1) - so the v1.0
 // pin is explained and direct vec construction is abandoned. Two struct-free
@@ -35,7 +39,7 @@ using REFrameworkNET.Callbacks;
 public class MoveSpeed
 {
     const string ModId = "MoveSpeed";
-    const string Version = "1.3";
+    const string Version = "1.5";
     // v1.3: monitor only - every write path below is gated on this.
     const bool MonitorOnly = true;
     static readonly float[] Presets = { 1f, 1.5f, 2f, 3f };
@@ -505,7 +509,7 @@ public class MoveSpeed
                 _probe[prefix + fn] = v.ToString();
                 n++;
             }
-            while (_probe.Count > 140)
+            while (_probe.Count > 220)
             {
                 string first = null;
                 foreach (var k in _probe.Keys) { first = k; break; }
@@ -516,7 +520,67 @@ public class MoveSpeed
         catch (Exception ex) { LogOnce("probe: " + ex.Message); }
     }
 
-    // ---- v1.2 struct-free travel ----
+    // v1.4: supporter objects off the entity (MoveSupporter et al).
+    // Resolved by getter name; missing getters are skipped silently.
+    static readonly string[] Supporters = { "MoveSupporter", "InputStateSupporter",
+        "MoveCancelChecker", "TerrainSupporter", "LockOnSupporter" };
+    static void ProbeSupporters()
+    {
+        try
+        {
+            if (_entity == null) return;
+            foreach (var s in Supporters)
+            {
+                ManagedObject o = null;
+                try { o = Obj(Call(_entity, "get_" + s)); } catch { continue; }
+                if (o == null) continue;
+                ProbeFloats(o, "s." + s + ".");
+            }
+        }
+        catch (Exception ex) { LogOnce("supporters: " + ex.Message); }
+    }
+
+    // ---- v1.5 signature recon ----
+    // Log parameter types for candidate travel methods. Read-only, runs at
+    // load. Struct-taking methods are unusable from C# here; float-only
+    // ones are v1.6 test-write candidates.
+    static void LogSignatures()
+    {
+        try
+        {
+            var tdb = API.GetTDB();
+            TypeDefinition td;
+            try { td = tdb.FindType("app.cPlayerCharacterEntity"); }
+            catch (Exception ex) { Log("sig: entity missing: " + ex.Message); return; }
+            if (td == null) { Log("sig: entity null"); return; }
+            foreach (var mn in new[] { "vacuumMove", "requestVacuum", "checkVacuum",
+                "get_VacuumSpeed", "set_VacuumSpeed", "get_MoveSupporter",
+                "get_OverrideMoveSpeed", "set_OverrideMoveSpeed",
+                "get_MoveVectorInputRate", "updateBeforeAction", "updateAfterAction" })
+            {
+                try
+                {
+                    var m = td.GetMethod(mn);
+                    if (m == null) { Log("sig: " + mn + " MISSING"); continue; }
+                    var parts = new List<string>();
+                    try
+                    {
+                        foreach (var p in m.GetParameters())
+                            parts.Add(p.Type != null ? p.Type.FullName : "?");
+                    }
+                    catch { parts.Add("unreadable"); }
+                    string ret;
+                    try { ret = m.ReturnType != null ? m.ReturnType.FullName : "void?"; }
+                    catch { ret = "?"; }
+                    Log("sig: " + mn + "(" + string.Join(",", parts) + ")->" + ret);
+                }
+                catch (Exception ex) { Log("sig: " + mn + " err " + ex.Message); }
+            }
+        }
+        catch (Exception ex) { Log("sig fatal: " + ex.Message); }
+    }
+
+    // ---- v1.2 struct-free travel (dormant in monitor) ----
     // (1) Override knob: pure float, no vec3 involved. Written on engage,
     // restored on release. Readback decides whether the game honors it.
     static void ApplyOverride()
@@ -711,6 +775,7 @@ public class MoveSpeed
                     {
                         ProbeFloats(_entity, "e.");
                         ProbeFloats(_chara, "c.");
+                        ProbeSupporters(); // v1.4: one level deeper
                     }
                 }
                 catch { }
@@ -985,6 +1050,7 @@ public class MoveSpeed
             _cfgPath = Path.Combine(dir, "movement_cs.json");
             _proofPath = Path.Combine(dir, "mov_proof_cs.json");
             LoadCfg();
+            LogSignatures(); // v1.5: read-only recon at load
             _vecOk = SelfTestFresh();
             Log("vec verdict at load: writes " + (_vecOk ? "ENABLED" : "DISABLED (clone retry on first latch)"));
             BuildMotNames();
