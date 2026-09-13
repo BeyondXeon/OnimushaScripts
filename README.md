@@ -10,7 +10,7 @@ REFramework Lua mods for **Onimusha: Way of the Sword** (Steam). Everything here
 
 ## Install
 
-Copy the `.lua` files you want from `Onimusha_Test/reframework/autorun/` into the game's `reframework/autorun/` folder, then in-game open the REFramework menu (`Insert`) → **ScriptRunner** → **Reset Scripts**. Each mod appears as its own menu entry. No compilers, SDKs, or build steps — Lua scripts load as-is.
+Copy the `.lua` files you want from `reframework/autorun/` into the game's `reframework/autorun/` folder, then in-game open the REFramework menu (`Insert`) → **ScriptRunner** → **Reset Scripts**. Each mod appears as its own menu entry. No compilers, SDKs, or build steps — Lua scripts load as-is.
 
 ## Mods
 
@@ -42,6 +42,6 @@ Developer/diagnostic tools (not gameplay mods): `param_dump_v1.0.lua` (full para
 
 ## Repo layout
 
-- `Onimusha_Test/reframework/autorun/` — the live, stable scripts (this README documents these)
-- `Onimusha_Backup_Stable/` — backup mirror of an older stable set
+- `reframework/autorun/` — the live, stable scripts (this README documents these)
+- `Backup/` — backup mirror of an older stable set
 - Commit history holds every retired version and experiment
