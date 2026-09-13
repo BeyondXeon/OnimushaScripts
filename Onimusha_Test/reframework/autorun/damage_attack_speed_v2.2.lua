@@ -1,12 +1,12 @@
--- Damage & Attack Speed v2.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v2.0: full decoupling. v1.9 leaked MOV into attacks (drift/travel or the
--- 45-frame hold engaged mid-swing, so MOV sped up attacks) and into
--- interactions (hold bled from the run into chests/doors, fighting
--- FasterInteractions' own layer scaling with a second orig cache).
--- Now attack actions NEVER get MOV (ATK or restore, nothing else) and
--- FasterInteractions' action classes (ladders, crawl, gaps, gimmick
--- interactions, demon-tendon walls) are excluded by type, so each mod
--- owns its own actions and they stop overwriting each other.
+-- Damage & Attack Speed v2.2 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v2.2: event-driven kick-start. Polling can only react after a clip moves
+-- or an action class is observed, so the fix hooks doEnter (same pattern
+-- the FasterInteractions/AttackSpeed mods use): the exact frame a
+-- locomotion action starts, layers + full hold apply instantly - zero
+-- ramp, including sprint chained straight out of an attack. Rate is still
+-- decided by the per-frame poll (loops only, no transition zoom).
+-- doEnter/doExit of attack vs locomotion actions are also traced to the
+-- ring, so a game-side recovery lockout shows up as a measurable gap.
 --
 -- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
 -- scaling at any setting. Module resolution is now multi-step with a trail
@@ -20,7 +20,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.0", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.2", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -77,7 +77,7 @@ local layer_orig, layer_out = {}, {}
 local cat_cache_addr, cat_cache_val = 0, nil
 local proof = { mod_addr = 0, attached = {}, addrs = {}, mult_hits = 0, player_fires = 0,
     calc_fires = 0, calc_scaled = 0, entity_type = "-", mod_step = "-",
-    enemy_hook = "-", player_calc_fires = 0 }
+    enemy_hook = "-", player_calc_fires = 0, ring = {} }
 
 local function type_name_of(obj)
     if obj == nil then return "nil" end
@@ -394,6 +394,8 @@ local function write_proof()
         mov_hold = proof.mov_hold_state or 0, mov_latched = proof.mov_latched_state or false,
         mov_blocked = proof.mov_blocked or "-",
         mov_speed = proof.mov_speed or 0,
+        last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
+        last_act = proof.last_act or "?", ring = proof.ring,
     })
 end
 
@@ -416,8 +418,8 @@ local function action_category()
         if okf and type(full) == "string" then
             local n = full:match("([^.]+)$") or full
             if n:find("Attack") then cat = "attack"
-            elseif n:find("Run") or n:find("Walk") or n:find("Dash") or n:find("Move")
-                or n:find("Turn") or n:find("Strafe") or n:find("Jog") then
+            elseif n:find("Run") or n:find("Walk") or n:find("Dash") or n:find("Sprint")
+                or n:find("Move") or n:find("Turn") or n:find("Strafe") or n:find("Jog") then
                 cat = "move"
             else
                 cat = "other"
@@ -488,7 +490,7 @@ local MOVE_ENUMS = {
     "app.plw_tree_Mot.SetID",
     "app.plw_SubWeapon_Mot.SetID",
 }
-local LOCO_KEYS = { "Walk", "Run", "Dash", "Jog", "Strafe", "Turn", "Step", "Move" }
+local LOCO_KEYS = { "Walk", "Run", "Dash", "Sprint", "Jog", "Strafe", "Turn", "Step", "Move" }
 local MOT_EXCLUDE = { "StepJump", "GenericFalling", "Falling", "NPC_", "Over_The_Fence",
     "Ladder", "Ledge", "Jump", "WallRun", "Guard", "Issen", "Bow", "QuickShot", "Tired" }
 local mot_names = {}
@@ -543,6 +545,11 @@ local travel_last, travel_t = nil, 0
 local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
 local MOV_HOLD_FRAMES = 45 -- ~0.75s at 60fps: bridges transitions + stick flicker
 local mov_hold = 0
+-- v2.1 engage/release event ring (last 12) for diagnosing delays from data.
+local function ring_push(ev)
+    proof.ring[#proof.ring + 1] = { t = tick, e = ev }
+    while #proof.ring > 20 do table.remove(proof.ring, 1) end
+end
 local function current_action()
     if chara == nil then return nil end
     return try_call(chara, "get_BaseCurrentAction")
@@ -649,8 +656,8 @@ re.on_pre_application_entry("UpdateMotion", function()
             end
             -- Source 2: move action class (first step, before travel exists).
             local move_act = aname ~= nil and (aname:find("Run") or aname:find("Walk")
-                or aname:find("Dash") or aname:find("Move") or aname:find("Turn")
-                or aname:find("Strafe") or aname:find("Jog")) or false
+                or aname:find("Dash") or aname:find("Sprint") or aname:find("Move")
+                or aname:find("Turn") or aname:find("Strafe") or aname:find("Jog")) or false
             -- Source 3: measured travel (tap-dash, anything the lists miss).
             local moving = false
             local tf = try_call(player_go, "get_Transform")
@@ -672,9 +679,17 @@ re.on_pre_application_entry("UpdateMotion", function()
                 travel_last = nil
             end
             if loco_clip or move_act or moving then
+                local src = loco_clip and "clip" or (move_act and "action" or "travel")
+                if mov_hold <= 0 then
+                    ring_push("engage:" .. src)
+                    proof.last_source = src
+                    proof.last_clip = clip_name_of(bank, motid) or "?"
+                    proof.last_act = aname or "?"
+                end
                 mov_hold = MOV_HOLD_FRAMES
             elseif mov_hold > 0 then
                 mov_hold = mov_hold - 1
+                if mov_hold == 0 then ring_push("release") end
             end
             if mov_hold > 0 then
                 -- Latch drives layer speed everywhere; root rate on loops
@@ -710,6 +725,81 @@ re.on_application_entry("UpdateMotion", function()
     pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(m))
 end)
 
+-- v2.2 event-driven kick-start: apply MOV the exact frame a locomotion
+-- action enters instead of waiting for the poll to observe a clip, an
+-- action class, or measured travel. Layers + full hold only (the poll
+-- decides the root rate next frame, so transitions can't zoom).
+-- Attack/interaction enters just clear the latch and trace.
+local LOCO_ACT_KEYS = { "Run", "Walk", "Dash", "Sprint", "Move", "Turn", "Strafe", "Jog" }
+local function is_loco_action_name(n)
+    if n == nil then return false end
+    for _, k in ipairs(LOCO_ACT_KEYS) do
+        if n:find(k, 1, true) then return true end
+    end
+    return false
+end
+do
+    local doenter_m = nil
+    local ok_td, base_td = pcall(sdk.find_type_definition, "app.PlayerActionBase.cPlayerActionBase")
+    if ok_td and base_td ~= nil then
+        local okm, m = pcall(base_td.get_method, base_td, "doEnter")
+        if okm and m ~= nil then doenter_m = m end
+    end
+    if doenter_m ~= nil then
+        pcall(sdk.hook, doenter_m, function(args)
+            if cfg.mov == nil or cfg.mov <= 1.0 then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_act, act = pcall(sdk.to_managed_object, args[2])
+            if not ok_act or act == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if not resolve_player() or entity == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            -- Only our own player's actions.
+            local ok_e, aenty = pcall(act.call, act, "get_CharacterEntity")
+            if not ok_e or aenty == nil then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_a1, a1 = pcall(aenty.get_address, aenty)
+            local ok_a2, a2 = pcall(entity.get_address, entity)
+            if not ok_a1 or not ok_a2 or a1 ~= a2 then
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            local ok_td2, td = pcall(act.get_type_definition, act)
+            local short = "?"
+            if ok_td2 and td ~= nil then
+                local okf, full = pcall(td.get_full_name, td)
+                if okf and type(full) == "string" then
+                    short = full:match("([^.]+)$") or full
+                end
+            end
+            if short:find("Attack", 1, true) then
+                travel_last, mov_hold = nil, 0
+                ring_push("act-enter:attack " .. short)
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if is_interaction_action(act) then
+                travel_last, mov_hold = nil, 0
+                ring_push("act-enter:interact " .. short)
+                return sdk.PreHookResult.CALL_ORIGINAL
+            end
+            if is_loco_action_name(short) then
+                mov_hold = MOV_HOLD_FRAMES
+                travel_last = nil
+                scale_layers(cfg.mov)
+                proof.last_source, proof.last_clip, proof.last_act = "doenter", "?", short
+                ring_push("kick:" .. short)
+            end
+            return sdk.PreHookResult.CALL_ORIGINAL
+        end)
+        L("doEnter kick-start hooked")
+    else
+        L("doEnter NOT FOUND - kick-start disabled, poll only")
+    end
+end
+
 local ui_threw = false
 re.on_draw_ui(function()
     local ok, err = pcall(function()
@@ -743,6 +833,7 @@ re.on_script_reset(function()
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
+    proof.ring, proof.last_source = {}, nil
 end)
 
 re.on_config_save(function() save() end)
