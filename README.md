@@ -18,7 +18,23 @@ REFramework Lua mods for **Onimusha: Way of the Sword** (Steam). Everything here
 
 ### 2. Install these scripts
 
-Copy the `.lua` files you want from `reframework/autorun/` in this repo into the game's `reframework/autorun/` folder (or grab the ready-made zip from [Releases](https://github.com/BeyondXeon/OnimushaScripts/releases) and extract it into the game folder), then in-game open the REFramework menu (`Insert`) → **ScriptRunner** → **Reset Scripts**. Each mod appears as its own menu entry. No compilers, SDKs, or build steps — Lua scripts load as-is.
+**Option A — release zip (easiest):**
+
+1. Go to [Releases](https://github.com/BeyondXeon/OnimushaScripts/releases) and download `OnimushaScripts-v1.0.zip`.
+2. Find your game folder: in Steam, right-click Onimusha → **Manage** → **Browse local files**.
+3. Extract the zip **into the game folder** (the same folder holding the game `.exe` and `dinput8.dll`). The scripts land in `reframework/autorun/`. Your folder should now contain paths like `reframework/autorun/movement_speed_v1.0.lua`.
+4. Launch the game, press `Insert`, go to **ScriptRunner**, and click **Reset Scripts**.
+5. Each mod shows up as its own entry in the REFramework menu (DamageMult, AtkSpeed, MoveSpeed, Invincibility, ItemGiver, ItemCatalog, FOVSlider). Open one, set your options — a config `.json` is auto-created in `reframework/data/` so settings persist.
+
+**Option B — pick individual scripts:**
+
+Same as above, but instead of the zip, copy only the `.lua` files you want from `reframework/autorun/` in this repo into the game's `reframework/autorun/` folder, then Reset Scripts in-game.
+
+**If something doesn't show up:**
+
+- Menu entry missing → the file must end in `.lua` (not `.lua.txt` — turn on file extensions in Explorer) and sit directly in `reframework/autorun/`.
+- REFramework menu itself won't open → `dinput8.dll` is in the wrong folder or was quarantined by antivirus; re-extract it next to the game `.exe`.
+- Settings not saving → check the game folder is writable (not read-only, Steam has permission to write `reframework/data/`).
 
 ## Mods
 
