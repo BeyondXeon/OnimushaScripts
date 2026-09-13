@@ -1,9 +1,9 @@
-// MoveSpeed v1.5 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
-// v1.5 MONITOR: v1.4 census found only flags in entity + 5 supporters
-// (but did surface MoveSupporter._IsSuperDash). This build logs method
-// signatures for the vacuum system (requestVacuum/checkVacuum/vacuumMove)
-// and SuperDash accessors at load - no game state needed, no writes.
-// If a travel-relevant method takes only floats, v1.6 will test-write it.
+// MoveSpeed v1.7 (C#) -- Onimusha: Way of the Sword, REFramework.NET source plugin.
+// v1.7 MONITOR: entity + 5 supporters hold only flags, so the live numbers
+// must sit on the ACTION objects (dash exits when fast enough - the gate is
+// probably a float field on the dash action itself). This build snapshots
+// the current action's numeric fields while latched. v1.6 override showed
+// no effect in testing; Lua still owns all speed.
 // v1.4 MONITOR: v1.3 census showed the entity itself holds almost no
 // numerics (24 fields, mostly flags) - the live state sits in supporter
 // sub-objects. This build snapshots MoveSupporter, InputStateSupporter,
@@ -39,8 +39,10 @@ using REFrameworkNET.Callbacks;
 public class MoveSpeed
 {
     const string ModId = "MoveSpeed";
-    const string Version = "1.5";
-    // v1.3: monitor only - every write path below is gated on this.
+    const string Version = "1.7";
+    // v1.6: MonitorOnly stays ON for every legacy write path (layers, rate,
+    // boost, opmul all belong to Lua or are dead). The ONLY live C# write
+    // is set_OverrideMoveSpeed, wired explicitly below.
     const bool MonitorOnly = true;
     static readonly float[] Presets = { 1f, 1.5f, 2f, 3f };
 
@@ -509,7 +511,7 @@ public class MoveSpeed
                 _probe[prefix + fn] = v.ToString();
                 n++;
             }
-            while (_probe.Count > 220)
+            while (_probe.Count > 320)
             {
                 string first = null;
                 foreach (var k in _probe.Keys) { first = k; break; }
@@ -583,14 +585,37 @@ public class MoveSpeed
     // ---- v1.2 struct-free travel (dormant in monitor) ----
     // (1) Override knob: pure float, no vec3 involved. Written on engage,
     // restored on release. Readback decides whether the game honors it.
+    // v1.6: signature is set_OverrideMoveSpeed(Nullable<float>) - pass a
+    // boxed (float?) or the invoke throws. Previous value (often null =
+    // unused) is recorded and restored, never flattened to 1.
+    static float? _ovrPrev = null;
+    static bool _ovrPrevRead = false;
+    static float ReadOverride()
+    {
+        try
+        {
+            if (_entity == null) return float.NaN;
+            var o = Call(_entity, "get_OverrideMoveSpeed");
+            if (o == null) return float.NaN;
+            return Convert.ToSingle(o);
+        }
+        catch { return float.NaN; }
+    }
     static void ApplyOverride()
     {
         try
         {
             if (_entity == null) return;
-            Call(_entity, "set_OverrideMoveSpeed", _mov);
+            if (!_ovrPrevRead)
+            {
+                float prev = ReadOverride();
+                _ovrPrev = float.IsNaN(prev) ? (float?)null : prev;
+                _ovrPrevRead = true;
+                Log("override: previous value was " + (_ovrPrev.HasValue ? _ovrPrev.Value.ToString() : "null"));
+            }
+            Call(_entity, "set_OverrideMoveSpeed", (float?)_mov);
             _ovrActive = true;
-            float rb = ToF(Call(_entity, "get_OverrideMoveSpeed"), float.NaN);
+            float rb = ReadOverride();
             _ovrReadback = float.IsNaN(rb) ? 0f : rb;
             Log($"override: wrote {_mov} readback {_ovrReadback}");
             if (!float.IsNaN(rb) && Math.Abs(rb - _mov) < 0.01f && _rateMode == "layers")
@@ -606,9 +631,11 @@ public class MoveSpeed
         try
         {
             if (!_ovrActive || _entity == null) { _ovrActive = false; return; }
-            Call(_entity, "set_OverrideMoveSpeed", 1f);
+            if (_ovrPrev.HasValue) Call(_entity, "set_OverrideMoveSpeed", _ovrPrev.Value);
+            else Call(_entity, "set_OverrideMoveSpeed", (float?)null);
             _ovrActive = false;
             if (_rateMode == "override") _rateMode = "layers";
+            Log("override: restored " + (_ovrPrev.HasValue ? _ovrPrev.Value.ToString() : "null"));
         }
         catch (Exception ex) { LogOnce("override restore: " + ex.Message); }
     }
@@ -776,20 +803,22 @@ public class MoveSpeed
                         ProbeFloats(_entity, "e.");
                         ProbeFloats(_chara, "c.");
                         ProbeSupporters(); // v1.4: one level deeper
+                        try // v1.7: the action object itself (dash gate lives here?)
+                        {
+                            var a = CurrentAction();
+                            if (a != null) { ProbeFloats(a, "a."); _lastAct = ShortName(TypeName(a)); }
+                        }
+                        catch { }
                     }
                 }
                 catch { }
             }
-            // v1.2: preset changed mid-latch -> re-apply override immediately
-            // v1.3: monitor never writes; just consume the flag.
+            // v1.6: preset changed -> re-apply override immediately (only live write).
             if (_ovrDirty)
             {
                 _ovrDirty = false;
-                if (!MonitorOnly)
-                {
-                    if (_hold > 0) ApplyOverride();
-                    else RestoreOverride();
-                }
+                if (_hold > 0) ApplyOverride();
+                else RestoreOverride();
             }
             if (!(_mov > 1f))
             {
@@ -802,9 +831,10 @@ public class MoveSpeed
             if (!ResolvePlayer()) { _hasLast = false; return; }
             if (_playerGo != null && Addr(_playerGo) != _playerGoAddr)
             {
-                RestoreLayers();
+                if (!MonitorOnly) RestoreLayers(); // v1.6: layers are Lua's
                 _motion = null;
                 _hasLast = false; _hasWrote = false; _hold = 0;
+                _ovrPrevRead = false; _ovrActive = false; // new entity, re-learn prev
                 return;
             }
             var act = CurrentAction();
@@ -916,11 +946,7 @@ public class MoveSpeed
                         _lastSource = src;
                         _lastClip = ClipName(bank, mot) ?? "?";
                         _lastAct = aname ?? "?";
-                        if (!MonitorOnly) // v1.3: monitor never writes
-                        {
-                            ApplyOverride(); // sanctioned knob first
-                            if (!_opTested) OpTestRate(); // native-multiply test
-                        }
+                        ApplyOverride(); // v1.6 live: nullable-correct write
                     }
                     _hold = HoldFrames;
                 }
@@ -1025,7 +1051,7 @@ public class MoveSpeed
             if (!Hexa.NET.ImGui.ImGui.TreeNode("MoveSpeed v" + Version + " (C#)##MoveSpeedCS")) return;
             try
             {
-                Hexa.NET.ImGui.ImGui.TextUnformatted("MONITOR ONLY - speed by Lua script");
+                Hexa.NET.ImGui.ImGui.TextUnformatted("C# override driver (layers by Lua)");
                 Hexa.NET.ImGui.ImGui.TextUnformatted(_mov > 1f ? "watching MOV " + Fmt(_mov) + " [" + _rateMode + "]" : "OFF");
                 for (int i = 0; i < Presets.Length; i++)
                 {
@@ -1050,6 +1076,7 @@ public class MoveSpeed
             _cfgPath = Path.Combine(dir, "movement_cs.json");
             _proofPath = Path.Combine(dir, "mov_proof_cs.json");
             LoadCfg();
+            _ovrPrevRead = false; _ovrActive = false; // v1.6: re-learn per load
             LogSignatures(); // v1.5: read-only recon at load
             _vecOk = SelfTestFresh();
             Log("vec verdict at load: writes " + (_vecOk ? "ENABLED" : "DISABLED (clone retry on first latch)"));
