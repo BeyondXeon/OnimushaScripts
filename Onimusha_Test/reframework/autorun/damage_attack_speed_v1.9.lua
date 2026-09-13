@@ -1,15 +1,10 @@
--- Damage & Attack Speed v1.7 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v1.7: movement latched ON while MOV is on. v1.6 keyed scaling off measured
--- travel each frame, so the first step (no travel yet) and every
--- sprint->walk/run transition (one slow frame) dropped back to x1.0 and had
--- to re-engage: visible delay. Now any locomotion sign (locomotion-bank
--- clip incl. Start/Stop/Turn transitions, move action class, or measured
--- motion) engages scaling and a 45-frame hold keeps it engaged through
--- transitions and stick flicker. Single owner rule: disable/remove the
--- standalone run_speed.lua while MOV is in use, both write layer speed +
--- root rate and will fight each other.
--- Climb/crawl/gap actions are excluded (the FasterInteractions mod owns
--- those and its timing is exact).
+-- Damage & Attack Speed v1.9 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v1.9: root rate on LOOP clips only. v1.8 fixed travel but overshot at
+-- start: Start/Stop/Turn transitions are NOT root-motion normalised, so
+-- layer speed alone already speeds their travel - adding the rate on top
+-- multiplied twice (x3*x3 zoom) until the Loop began. Now the latch drives
+-- layer speed on every locomotion clip, but the root rate only while a
+-- Loop clip plays; transitions actively reset the rate to x1.
 --
 -- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
 -- scaling at any setting. Module resolution is now multi-step with a trail
@@ -23,7 +18,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "1.7", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "1.9", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -394,6 +389,8 @@ local function write_proof()
         enemy_hook = proof.enemy_hook, enemy_fires = proof.enemy_fires or 0,
         enemy_scaled = proof.enemy_scaled or 0,
         player_calc_fires = proof.player_calc_fires or 0,
+        mov_hold = proof.mov_hold_state or 0, mov_latched = proof.mov_latched_state or false,
+        mov_speed = proof.mov_speed or 0,
     })
 end
 
@@ -445,18 +442,27 @@ local function rate_vec(mult)
     end
     return v
 end
+-- v1.8: write-through every frame while wanted. The game re-asserts
+-- ActionRootTransRate on its own state changes, so a write-once cache
+-- silently stops working (fast animation, vanilla travel). One set_ call
+-- per frame is negligible.
+local mov_latched, mov_latched_mult = false, 1.0 -- re-asserted post-update too
+local mov_rate_on = false -- v1.9: rate applies on loops only, not transitions
 local function sync_root_rate(mult, want)
     if entity == nil then return end
     if want and mult > 1.0 then
-        if rate_applied and rate_mult == mult then return end -- already set
-        local ok = pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(mult))
-        if ok then rate_applied, rate_mult = true, mult end
+        pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(mult))
+        rate_applied, rate_mult = true, mult
+        mov_latched, mov_latched_mult, mov_rate_on = true, mult, true
     elseif rate_applied then
         local ok, r = pcall(entity.call, entity, "get_ActionRootTransRate")
         if ok and r ~= nil and math.abs(r.x - rate_mult) < 0.001 then
             pcall(entity.call, entity, "set_ActionRootTransRate", ONE_VEC)
         end
         rate_applied = false
+        mov_latched, mov_rate_on = false, false
+    else
+        mov_latched, mov_rate_on = false, false
     end
 end
 
@@ -508,9 +514,12 @@ do
     end
     L("locomotion clip names loaded: " .. n)
 end
-local function is_loco_clip(bank, motid)
+local function clip_name_of(bank, motid)
     local t = mot_names[bank]
-    local name = t and t[motid] or nil
+    return t and t[motid] or nil
+end
+local function is_loco_clip(bank, motid)
+    local name = clip_name_of(bank, motid)
     if name == nil then return false end
     for _, s in ipairs(MOT_EXCLUDE) do
         if string.find(name, s, 1, true) then return false end
@@ -519,6 +528,13 @@ local function is_loco_clip(bank, motid)
         if string.find(name, k, 1, true) then return true end
     end
     return false
+end
+-- v1.9: Loop clips normalise root motion (rate REQUIRED); transitions do
+-- not (layer speed alone carries them, rate would double-multiply).
+local function is_loop_clip(bank, motid)
+    local name = clip_name_of(bank, motid)
+    if name == nil then return false end
+    return string.find(name, "Loop", 1, true) ~= nil
 end
 local travel_last, travel_t = nil, 0
 local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
@@ -573,13 +589,18 @@ re.on_pre_application_entry("UpdateMotion", function()
             travel_last, mov_hold = nil, 0
         else
             -- Source 1: locomotion-bank clip (loops AND transitions).
-            local loco_clip = false
+            -- v1.9: remember whether it is a Loop: only loops get the root
+            -- rate (they normalise root motion); transitions get layer
+            -- speed only (their travel already follows it - rate would
+            -- double-multiply and cause the start-up zoom).
+            local loco_clip, loop_clip = false, false
             local mo = player_motion()
             local layer = mo and try_call(mo, "getLayer", 0) or nil
             local bank = layer and try_call(layer, "get_MotionBankID") or nil
             local motid = layer and try_call(layer, "get_MotionID") or nil
             if type(bank) == "number" and type(motid) == "number" then
                 loco_clip = is_loco_clip(bank, motid)
+                loop_clip = is_loop_clip(bank, motid)
             end
             -- Source 2: move action class (first step, before travel exists).
             local move_act = aname ~= nil and (aname:find("Run") or aname:find("Walk")
@@ -611,9 +632,20 @@ re.on_pre_application_entry("UpdateMotion", function()
                 mov_hold = mov_hold - 1
             end
             if mov_hold > 0 then
+                -- Latch drives layer speed everywhere; root rate on loops
+                -- only, actively reset on transitions (kills the zoom).
+                -- move_act/moving engages without clip info: assume a loop
+                -- is coming and allow the rate (it self-corrects next
+                -- frame once the clip is known).
+                local want_rate = loop_clip or (not loco_clip and (move_act or moving))
                 scale_layers(cfg.mov)
-                sync_root_rate(cfg.mov, true)
+                sync_root_rate(cfg.mov, want_rate)
+                proof.mov_hold_state, proof.mov_latched_state = mov_hold, true
+                proof.mov_rate_state = want_rate
                 return
+            else
+                proof.mov_hold_state, proof.mov_latched_state = mov_hold, mov_latched
+                proof.mov_rate_state = false
             end
         end
     else
@@ -621,6 +653,16 @@ re.on_pre_application_entry("UpdateMotion", function()
     end
     if next(layer_orig) ~= nil then restore_layers() end
     sync_root_rate(1.0, false)
+end)
+
+-- v1.8: re-assert AFTER the game's own motion update. Whatever the game
+-- recomputes during UpdateMotion gets overridden right after, so the rate
+-- holds until next frame no matter where root motion is consumed.
+re.on_application_entry("UpdateMotion", function()
+    if not mov_latched or not mov_rate_on or entity == nil then return end
+    local m = mov_latched_mult
+    if m == nil or m <= 1.0 then return end
+    pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(m))
 end)
 
 local ui_threw = false
@@ -652,6 +694,7 @@ re.on_script_reset(function()
     layer_out = {}
     cat_cache_addr, cat_cache_val = 0, nil
     travel_last, travel_t, mov_hold = nil, 0, 0
+    mov_latched, mov_latched_mult, mov_rate_on = false, 1.0, false
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
