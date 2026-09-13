@@ -1,0 +1,938 @@
+{
+    "items": [
+        {
+            "box": 0,
+            "count": 0,
+            "has": true,
+            "id": 46,
+            "name": "46(---)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 336,
+            "name": "336(Genma Note: Byakue)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 413,
+            "name": "413(Outfit: Light Kimono 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 415,
+            "name": "415(Cloudbiter Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 1199,
+            "name": "1199(Genma Note: Kogashira)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 1330,
+            "name": "1330(New Charm)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 1593,
+            "name": "1593(Amulet of Introspection)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 2212,
+            "name": "2212(Genma Note: Dokyo)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 2901,
+            "name": "2901(Oni Cloth (Healing))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 3191,
+            "name": "3191(Rear Gate Key)"
+        },
+        {
+            "box": 0,
+            "count": 1,
+            "has": true,
+            "id": 3314,
+            "name": "3314(Oni Gauntlet)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 3821,
+            "name": "3821(Old Drawing No. 3)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 3833,
+            "name": "3833(Genma Note: Sasaki Ganryu)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 5862,
+            "name": "5862(<COLOR FF0000>#Rejected#</COLOR> ItemDataText_IT_5862)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 5932,
+            "name": "5932(Outfit: Tasuki Sash)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 6729,
+            "name": "6729(Cotton Cloth)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 6891,
+            "name": "6891(Greater Soul Crystal)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 7374,
+            "name": "7374(The Flashing Void)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 7434,
+            "name": "7434(Lesser Defense Talisman)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 7568,
+            "name": "7568(Leather)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 7749,
+            "name": "7749(Hellfire Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8085,
+            "name": "8085(Genma Note: Mohja)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8133,
+            "name": "8133(Striped Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8259,
+            "name": "8259(Outfit: Bird Call)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8413,
+            "name": "8413(Earth-Shakers)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8874,
+            "name": "8874(Sword Appearance: Shishioh)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8949,
+            "name": "8949(Stage Costume)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8950,
+            "name": "8950(New Hozuki Pouch)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 8973,
+            "name": "8973(Malicite Mass)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 9109,
+            "name": "9109(Genma Note: Oboro Garasu)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 9253,
+            "name": "9253(Genma Note: Shuten Doji)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 9254,
+            "name": "9254(Oni Attire)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 9487,
+            "name": "9487(Old Drawing No. 1)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 9549,
+            "name": "9549(Oni Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 10152,
+            "name": "10152(Outfit: Elegance)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 10773,
+            "name": "10773(Sword Appearance: Whittled Oar)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 10971,
+            "name": "10971(Genma Note: Daidara)"
+        },
+        {
+            "box": 2,
+            "count": 0,
+            "has": true,
+            "id": 11032,
+            "name": "11032(Stimulant)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 11076,
+            "name": "11076(Genma Note: Ifuu)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 11088,
+            "name": "11088(Oni Cloth (Aggressor))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 11192,
+            "name": "11192(Byakue's Talisman)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 12039,
+            "name": "12039(Blessed Beads)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 12129,
+            "name": "12129(Sword Appearance: Enryuu)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 12597,
+            "name": "12597(Horn Token (Blazing))"
+        },
+        {
+            "box": 1,
+            "count": 1,
+            "has": true,
+            "id": 12633,
+            "name": "12633(Still Water)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 13047,
+            "name": "13047(Genma Note: Hitotsume Sho)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 13169,
+            "name": "13169(Morning Mist Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 13810,
+            "name": "13810(Morning Mist Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14134,
+            "name": "14134(Outfit: Panda Costume)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14276,
+            "name": "14276(Tempered Iron)"
+        },
+        {
+            "box": 0,
+            "count": 1,
+            "has": true,
+            "id": 14370,
+            "name": "14370(Gauntlet-Hiding Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14381,
+            "name": "14381(Outfit: Master's Garb)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14445,
+            "name": "14445(Genma Note: Burai)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14467,
+            "name": "14467(Genma Note: Dohatsu-ten)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14487,
+            "name": "14487(Fine Silk Cloth)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 14847,
+            "name": "14847(Outfit: Red Armor)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15298,
+            "name": "15298(Outfit: Snow Camellia)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15301,
+            "name": "15301(Genma Note: Hirehime)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15452,
+            "name": "15452(Lesser Soul Crystal)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15508,
+            "name": "15508(Whetstone)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15658,
+            "name": "15658(Soul Squeezer)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 15668,
+            "name": "15668(Dohatsu-ten's Horn)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16329,
+            "name": "16329(Heavy Restorative)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16424,
+            "name": "16424(Iron)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16477,
+            "name": "16477(Fireman's Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16480,
+            "name": "16480(Oni Cloth (Regeneration))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16820,
+            "name": "16820(Bishamon Sword)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16890,
+            "name": "16890(Lesser Might Talisman)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 16965,
+            "name": "16965(Sword Appearance: Kikoku)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 17135,
+            "name": "17135(Sword Appearance: Ura-giri)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 17210,
+            "name": "17210(Greater Defense Talisman)"
+        },
+        {
+            "box": 0,
+            "count": 1,
+            "has": true,
+            "id": 17802,
+            "name": "17802(No Name)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 18151,
+            "name": "18151(Old Temple Key)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 18152,
+            "name": "18152(Outfit: Master's Garb 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 18329,
+            "name": "18329(Oni Haori 2)"
+        },
+        {
+            "box": 1,
+            "count": 0,
+            "has": true,
+            "id": 19198,
+            "name": "19198(Mirror of Revival)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 19338,
+            "name": "19338(Wind-Whipper)"
+        },
+        {
+            "box": 2,
+            "count": 0,
+            "has": true,
+            "id": 19411,
+            "name": "19411(Prayer Beads)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 19861,
+            "name": "19861(The Two Celestials)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 20080,
+            "name": "20080(Horn Token (Reflex))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 20119,
+            "name": "20119(Outfit: Oni Dance)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 20845,
+            "name": "20845(Genma Note: Kogai)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 21211,
+            "name": "21211(Genma Note: Greater Nue)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 21678,
+            "name": "21678(Sword Appearance: White Lion)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 21723,
+            "name": "21723(Genma Note: Yoshitsune)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22003,
+            "name": "22003(Sword Appearance: Mooncrossed)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22384,
+            "name": "22384(Genma Note: Hitotsume Gasa)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22388,
+            "name": "22388(New Skill)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22649,
+            "name": "22649(Genma Note: Chijiko)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22774,
+            "name": "22774(Old Drawing No. 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 22816,
+            "name": "22816(Firebird Flute)"
+        },
+        {
+            "box": 0,
+            "count": 1,
+            "has": true,
+            "id": 23169,
+            "name": "23169(Light Kimono)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 23317,
+            "name": "23317(Moonlight Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 23589,
+            "name": "23589(Genma Note: Kubi Akari)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 24143,
+            "name": "24143(Outfit: Warlord's Armor)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 24318,
+            "name": "24318(Master's Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 24444,
+            "name": "24444(Genma Note: Nue)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 24482,
+            "name": "24482(Oni Cloth (Resistance))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 25002,
+            "name": "25002(Dungeon Key)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 25049,
+            "name": "25049(White Rice Ball)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 25428,
+            "name": "25428(Outfit: Goldfish Dance)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 25805,
+            "name": "25805(Genma Note: Rasho-gan)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 26418,
+            "name": "26418(Sword Appearance: Raizan)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 26615,
+            "name": "26615(Hozuki)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 26655,
+            "name": "26655(Master's Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 26749,
+            "name": "26749(Outfit: Flower Dance)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 27243,
+            "name": "27243(Old Drawing No. 5)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 27248,
+            "name": "27248(Oni Treasure)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 27324,
+            "name": "27324(Sun-Dried Hozuki)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 27768,
+            "name": "27768(Sword Appearance: Myogo)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 27860,
+            "name": "27860(Genma Note: Togemaru)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28035,
+            "name": "28035(Johari Shard)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28160,
+            "name": "28160(Velvet Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28336,
+            "name": "28336(Major Miracle Cure)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28559,
+            "name": "28559(Oni Cloth (Awakening))"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28576,
+            "name": "28576(Sword Appearance: Bamboo & Panda)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28716,
+            "name": "28716(Gauntlet-Hiding Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28806,
+            "name": "28806(Soul Sucker)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 28924,
+            "name": "28924(Outfit: Warlord's Armor 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 29243,
+            "name": "29243(Oni Gauntlet: Crimson Lotus)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 29547,
+            "name": "29547(Minor Miracle Cure)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 29992,
+            "name": "29992(Sword Appearance: Sealed Curse)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 30419,
+            "name": "30419(Striped Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 30505,
+            "name": "30505(Fireman's Haori)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 31281,
+            "name": "31281(Velvet Haori 2)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 31352,
+            "name": "31352(Genma Note: Benkei)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 31493,
+            "name": "31493(Old Drawing No. 4)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 31697,
+            "name": "31697(Mixed Grain Rice Ball)"
+        },
+        {
+            "box": 2,
+            "count": 0,
+            "has": true,
+            "id": 32279,
+            "name": "32279(Greater Might Talisman)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 32509,
+            "name": "32509(Outfit: Wataru-kun Costume)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 32699,
+            "name": "32699(Sword Appearance: Sakurahime)"
+        },
+        {
+            "box": 0,
+            "count": 0,
+            "has": false,
+            "id": 32727,
+            "name": "32727(Hempen Cloth)"
+        }
+    ],
+    "meta": {
+        "found": 132,
+        "mod": "ItemCatalog",
+        "range": [
+            1,
+            1000000
+        ],
+        "version": "1.4",
+        "via": "SaveDataManager.get_Helper.get__Item"
+    }
+}

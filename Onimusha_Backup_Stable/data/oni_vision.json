@@ -1,0 +1,8 @@
+{
+    "enabled": true,
+    "steps": {
+        "eye_range": 10,
+        "eye_time": 10
+    },
+    "version": 1
+}

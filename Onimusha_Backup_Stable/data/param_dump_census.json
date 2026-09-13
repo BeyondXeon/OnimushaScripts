@@ -1,0 +1,260 @@
+{
+    "census": [
+        {
+            "found": true,
+            "kind": "managed",
+            "name": "app.PlayerManager",
+            "typename": "app.PlayerManager"
+        },
+        {
+            "found": true,
+            "kind": "managed",
+            "name": "app.EnemyManager",
+            "typename": "app.EnemyManager"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.CharacterManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.PropsManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.FigureManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.SaveManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.SaveServiceManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.GameManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.InteractManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.ItemManager",
+            "typename": "-"
+        },
+        {
+            "found": true,
+            "kind": "managed",
+            "name": "app.WeaponManager",
+            "typename": "app.WeaponManager"
+        },
+        {
+            "found": true,
+            "kind": "managed",
+            "name": "app.CameraManager",
+            "typename": "app.CameraManager"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.GuiManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.SoundManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.EffectManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.HitManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.DamageManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.HealthManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.SceneManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.MotionManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.BehaviorManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.NavigationManager",
+            "typename": "-"
+        },
+        {
+            "found": true,
+            "kind": "managed",
+            "name": "app.NetworkManager",
+            "typename": "app.NetworkManager"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.UIManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.InputManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.OptionManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.QuestManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.MapManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.TimeManager",
+            "typename": "-"
+        },
+        {
+            "found": false,
+            "kind": "managed",
+            "name": "app.WeatherManager",
+            "typename": "-"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.SceneManager",
+            "typename": "via.SceneManager"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.Application",
+            "typename": "via.Application"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.RenderManager",
+            "typename": "via.RenderManager"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.ResourceManager",
+            "typename": "via.ResourceManager"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.HID",
+            "typename": "via.HID"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.Sound",
+            "typename": "via.Sound"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.GUI",
+            "typename": "via.GUI"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.Physics",
+            "typename": "via.Physics"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.Motion",
+            "typename": "via.Motion"
+        },
+        {
+            "found": true,
+            "kind": "native",
+            "name": "via.Navigation",
+            "typename": "via.Navigation"
+        }
+    ],
+    "hp": 1000,
+    "maxhp": 1000,
+    "meta": {
+        "build": {
+            "branch": "master",
+            "commit": "0352bbd57f4e527fe2810e927e66749281f9201e",
+            "game": "onimusha_wots",
+            "tag": "v1.5.9.1",
+            "tdb": "82"
+        },
+        "mod": "ParamDump",
+        "run": "INFHP",
+        "version": "1.2"
+    },
+    "scan": "11501 values, 5 roots, depth 3 [run INFHP]",
+    "types": "types 617, methods 10078, fields 5342 (filter ALL)"
+}

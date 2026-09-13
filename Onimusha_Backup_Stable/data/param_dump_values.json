@@ -1,0 +1,55 @@
+{
+    "changes_top": null,
+    "diff_top": [
+        {
+            "after": 36747,
+            "before": 36181,
+            "delta": 566,
+            "path": "S:app.EnemyManager._SquadManager._BattleTargetList._version"
+        },
+        {
+            "after": 21296,
+            "before": 21013,
+            "delta": 283,
+            "path": "S:app.PlayerManager._TriggerZoneManager._TriggerZoneCharaData._version"
+        },
+        {
+            "after": 21296,
+            "before": 21013,
+            "delta": 283,
+            "path": "S:app.PlayerManager._TriggerZoneManager._RequestTriggerZoneCharaData._version"
+        },
+        {
+            "after": 20818,
+            "before": 20535,
+            "delta": 283,
+            "path": "S:app.EnemyManager._RequestDieEffectControllerList._version"
+        },
+        {
+            "after": 3,
+            "before": 1,
+            "delta": 2,
+            "path": "S:app.PlayerManager._PlayerInfoList[0].<Character>k__BackingField._PlayerCharacterEntity._FrameCountRayThroughHeight"
+        },
+        {
+            "after": 107,
+            "before": 105,
+            "delta": 2,
+            "path": "S:app.EnemyManager._SquadManager._AttackPrivilegeList._version"
+        },
+        {
+            "after": 1,
+            "before": 0,
+            "delta": 1,
+            "path": "S:app.EnemyManager._SquadManager._SquadsInfoList._items[0].<RequestAgainMainTargetCount>k__BackingField"
+        }
+    ],
+    "meta": {
+        "hp": 1000,
+        "maxhp": 1000,
+        "run": "INFHP",
+        "tick": 2948,
+        "tracked": 11501
+    },
+    "snapshot_a_count": 17522
+}

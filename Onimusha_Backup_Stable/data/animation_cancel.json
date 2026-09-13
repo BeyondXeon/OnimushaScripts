@@ -1,0 +1,14 @@
+{
+    "attack": true,
+    "debug_log": false,
+    "dodge": true,
+    "enabled": true,
+    "finish_damage": true,
+    "finish_parry": true,
+    "guard": true,
+    "issen": false,
+    "move": false,
+    "other": false,
+    "sekiro": false,
+    "sekiro_ms": 150
+}

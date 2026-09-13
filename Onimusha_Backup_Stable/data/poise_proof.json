@@ -1,0 +1,50 @@
+{
+    "addrs": {
+        "entity": 95175569056,
+        "inv": 200784829264,
+        "mod": 200784810560
+    },
+    "cfg": {
+        "enabled": true,
+        "mode": "infhp",
+        "poise": true
+    },
+    "hp": {
+        "last": 1000,
+        "max": 1000,
+        "step": "contexts[1]"
+    },
+    "proof": {
+        "break_fires": 0,
+        "break_skips": 0,
+        "gates": {
+            "calcRikidoDamage": {
+                "attached": true,
+                "fires": 0
+            },
+            "isEnableGuardBreakDamage": {
+                "attached": true,
+                "fires": 0
+            },
+            "isEnablePartsRikidoDamage": {
+                "attached": true,
+                "fires": 0
+            },
+            "isEnableRikidoDamage": {
+                "attached": true,
+                "fires": 0
+            }
+        },
+        "gauge_found": false,
+        "gauge_step": "-",
+        "hp_blocks": 0,
+        "hp_hook": "4/4 attached",
+        "restore_key": "I@15967332336.<EventJackControllerEntity>k__BackingField._PlayerCharacterEntity._RayThroughHeight",
+        "restore_n": 45,
+        "stock_attached": true,
+        "stock_fires": 0,
+        "tired_evals": 0
+    },
+    "tick": 25800,
+    "version": "1.29"
+}

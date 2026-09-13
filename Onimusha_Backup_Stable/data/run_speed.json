@@ -1,0 +1,8 @@
+{
+    "enabled": true,
+    "log_nodes": false,
+    "loops_only": true,
+    "mult_dash": 1.25,
+    "mult_run": 1.25,
+    "mult_walk": 1.0
+}

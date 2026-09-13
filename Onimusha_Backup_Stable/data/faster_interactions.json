@@ -1,0 +1,19 @@
+{
+    "chest": true,
+    "crawl": true,
+    "door": true,
+    "elevator_down": true,
+    "elevator_up": false,
+    "enabled": true,
+    "gap": true,
+    "ladder": true,
+    "oni_wall": true,
+    "speed": 1.5,
+    "speed_chest": 0.0,
+    "speed_crawl": 0.0,
+    "speed_door": 0.0,
+    "speed_elevator": 0.0,
+    "speed_gap": 0.0,
+    "speed_ladder": 0.0,
+    "speed_oni_wall": 0.0
+}

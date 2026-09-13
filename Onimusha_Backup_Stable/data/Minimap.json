@@ -1,0 +1,28 @@
+{
+  "Toggle hotkey": {
+    "Key": 577,
+    "Ctrl": false,
+    "Shift": false,
+    "Alt": false,
+    "IsValid": true
+  },
+  "Orientation": 0,
+  "Shape": 1,
+  "Rolling": 0,
+  "Width": 420,
+  "Height": 280,
+  "Zoom": 4.8,
+  "Right margin": 36,
+  "Top margin": 80,
+  "Show Oni walls": true,
+  "Show chests": true,
+  "Show hidden chests": true,
+  "Show locked doors": true,
+  "Show area entrances/exits": true,
+  "Show ladders": true,
+  "Show collectibles": true,
+  "Show missions": true,
+  "Show map markers": true,
+  "Show enemies": true,
+  "Show footprints": true
+}

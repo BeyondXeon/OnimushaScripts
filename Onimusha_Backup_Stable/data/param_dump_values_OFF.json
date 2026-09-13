@@ -1,0 +1,73 @@
+{
+    "changes_top": null,
+    "diff_top": [
+        {
+            "after": 33229,
+            "before": 32977,
+            "delta": 252,
+            "path": "S:app.EnemyManager._SquadManager._BattleTargetList._version"
+        },
+        {
+            "after": 19537,
+            "before": 19411,
+            "delta": 126,
+            "path": "S:app.PlayerManager._TriggerZoneManager._TriggerZoneCharaData._version"
+        },
+        {
+            "after": 19059,
+            "before": 18933,
+            "delta": 126,
+            "path": "S:app.EnemyManager._RequestDieEffectControllerList._version"
+        },
+        {
+            "after": 19537,
+            "before": 19411,
+            "delta": 126,
+            "path": "S:app.PlayerManager._TriggerZoneManager._RequestTriggerZoneCharaData._version"
+        },
+        {
+            "after": 780,
+            "before": 880,
+            "delta": -100,
+            "path": "HealthManager:get_TotalHealth()"
+        },
+        {
+            "after": 780,
+            "before": 880,
+            "delta": -100,
+            "path": "HealthManager.<Health>k__BackingField"
+        },
+        {
+            "after": 780,
+            "before": 880,
+            "delta": -100,
+            "path": "HealthManager:get_Health()"
+        },
+        {
+            "after": 54,
+            "before": 53,
+            "delta": 1,
+            "path": "S:app.CameraManager._CamSysMiniComponent.CameraShake._CameraShakeManager._CurrentOrder"
+        },
+        {
+            "after": 2,
+            "before": 3,
+            "delta": -1,
+            "path": "S:app.PlayerManager._PlayerInfoList[0].<Character>k__BackingField._PlayerCharacterEntity._FrameCountRayThroughHeight"
+        },
+        {
+            "after": 0.7799999713897705,
+            "before": 0.8799999952316284,
+            "delta": -0.10000002384185791,
+            "path": "HealthManager:get_Normalize()"
+        }
+    ],
+    "meta": {
+        "hp": 580,
+        "maxhp": 1000,
+        "run": "OFF",
+        "tick": 1425,
+        "tracked": 11501
+    },
+    "snapshot_a_count": 17522
+}

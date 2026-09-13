@@ -1,0 +1,28 @@
+{
+    "addrs": {
+        "203133053808": 1
+    },
+    "attached": {
+        "calcDamage": true,
+        "getAttackRate": true,
+        "getDamageRate": true
+    },
+    "calc_fires": 0,
+    "calc_scaled": 0,
+    "cfg": {
+        "act": 1.0,
+        "atk": 1.0,
+        "dmg": 1.0
+    },
+    "enemy_fires": 0,
+    "enemy_hook": "ATTACHED",
+    "enemy_scaled": 0,
+    "entity_type": "-",
+    "mod_addr": 0,
+    "mod_step": "-",
+    "mult_hits": 0,
+    "player_calc_fires": 0,
+    "player_fires": 0,
+    "tick": 25800,
+    "version": "1.3"
+}

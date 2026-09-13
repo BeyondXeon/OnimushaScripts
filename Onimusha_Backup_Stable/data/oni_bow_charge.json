@@ -1,0 +1,7 @@
+{
+    "enabled": true,
+    "steps": {
+        "charge": 3
+    },
+    "version": 1
+}

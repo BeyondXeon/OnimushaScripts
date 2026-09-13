@@ -10,13 +10,9 @@ i-d-be-happy-to-help-you-create-a-game-mod-however-i-need-some-crucial-informati
 **/app_types.json
 **/via_types.json
 
-# Generated param dumps (6MB+ each, duplicated across Collection/Backup)
-/**/param_dump_*.json
-/**/param_dump*.json
-**/*_census*.json
+# Generated param dumps - only the behemoths (6MB+ types, 2MB codebook, duplicated)
+**/param_dump_types*.json
 **/param_codebook.json
-# Uncomment to track small curated codebooks instead:
-# !Onimusha_TDB/param_codebook.json
 
 # Binaries / plugins
 **/*.dll
