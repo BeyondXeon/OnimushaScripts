@@ -23,7 +23,7 @@ REFramework Lua mods for **Onimusha: Way of the Sword** (Steam). Everything here
 1. Go to [Releases](https://github.com/BeyondXeon/OnimushaScripts/releases) and download `OnimushaScripts-v1.0.zip`.
 2. Find your game folder: in Steam, right-click Onimusha → **Manage** → **Browse local files**.
 3. Extract the zip **into the game folder** (the same folder holding the game `.exe` and `dinput8.dll`). The scripts land in `reframework/autorun/`. Your folder should now contain paths like `reframework/autorun/movement_speed_v1.0.lua`.
-4. Launch the game, press `Insert`, go to **ScriptRunner**, and click **Reset Scripts** — this is only needed if you added the files while the game was already running. If you put the files in place before starting the game, they load automatically and you can skip this.
+4. (Optional) If you added the files while the game was already running, open the REFramework menu (`Insert`), go to **ScriptRunner**, and click **Reset Scripts** to load them without restarting. Files placed before launch load automatically.
 5. Each mod shows up as its own entry in the REFramework menu (DamageMult, AtkSpeed, MoveSpeed, Invincibility, ItemGiver, ItemCatalog, FOVSlider). Open one, set your options — a config `.json` is auto-created in `reframework/data/` so settings persist.
 
 **Option B — pick individual scripts:**
