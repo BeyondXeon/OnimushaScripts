@@ -5,12 +5,20 @@ REFramework Lua mods for **Onimusha: Way of the Sword** (Steam). Everything here
 ## Requirements
 
 - Onimusha: Way of the Sword (Steam version recommended)
-- [REFramework](https://github.com/praydog/REFramework/releases) (`dinput8.dll` extracted into the game folder; menu opens with `Insert`)
+- [REFramework](https://github.com/praydog/REFramework/releases) (see setup below — includes an Onimusha-specific build on [Nexus Mods](https://www.nexusmods.com/onimushawayofthesword/mods/54))
 - A text editor for configs (Notepad++, VS Code, or plain Notepad)
 
 ## Install
 
-Copy the `.lua` files you want from `reframework/autorun/` into the game's `reframework/autorun/` folder, then in-game open the REFramework menu (`Insert`) → **ScriptRunner** → **Reset Scripts**. Each mod appears as its own menu entry. No compilers, SDKs, or build steps — Lua scripts load as-is.
+### 1. Install REFramework (once)
+
+1. Download REFramework — either the [GitHub release](https://github.com/praydog/REFramework/releases) or the Onimusha build from [Nexus Mods](https://www.nexusmods.com/onimushawayofthesword/mods/54).
+2. Extract `dinput8.dll` from the zip **into your Onimusha game install folder** (the one containing the game `.exe`).
+3. Launch the game via Steam, then press `Insert` — the REFramework menu should appear. This also creates the `reframework/` folder (including `reframework/autorun/`) on first run.
+
+### 2. Install these scripts
+
+Copy the `.lua` files you want from `reframework/autorun/` in this repo into the game's `reframework/autorun/` folder (or grab the ready-made zip from [Releases](https://github.com/BeyondXeon/OnimushaScripts/releases) and extract it into the game folder), then in-game open the REFramework menu (`Insert`) → **ScriptRunner** → **Reset Scripts**. Each mod appears as its own menu entry. No compilers, SDKs, or build steps — Lua scripts load as-is.
 
 ## Mods
 
