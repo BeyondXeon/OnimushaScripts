@@ -1,12 +1,14 @@
--- Damage & Attack Speed v2.2 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v2.2: event-driven kick-start. Polling can only react after a clip moves
--- or an action class is observed, so the fix hooks doEnter (same pattern
--- the FasterInteractions/AttackSpeed mods use): the exact frame a
--- locomotion action starts, layers + full hold apply instantly - zero
--- ramp, including sprint chained straight out of an attack. Rate is still
--- decided by the per-frame poll (loops only, no transition zoom).
--- doEnter/doExit of attack vs locomotion actions are also traced to the
--- ring, so a game-side recovery lockout shows up as a measurable gap.
+-- Damage & Attack Speed v2.4 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v2.4: different approach - displacement boost instead of root rate. Proof
+-- showed layer_speed sticks at 2.0 yet DashStart->Dash still takes ~48
+-- ticks: start transitions are VELOCITY-gated (they exit when the body is
+-- fast enough, and the ramp is physics, not clip), so no amount of clip
+-- scaling shortens them. Now, while latched, each frame's measured
+-- horizontal displacement is multiplied (same rubber-band pattern as the
+-- FasterInteractions gap/ladder boost): thresholds are reached sooner, so
+-- the ramp itself is shorter AND travel is faster throughout. Root rate
+-- stays off (boost already contains it - both would double up). Damage,
+-- guard, stagger, knockdown, death and falls are excluded from the boost.
 --
 -- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
 -- scaling at any setting. Module resolution is now multi-step with a trail
@@ -20,7 +22,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.2", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.4", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -396,6 +398,8 @@ local function write_proof()
         mov_speed = proof.mov_speed or 0,
         last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
         last_act = proof.last_act or "?", ring = proof.ring,
+        layer_speed = proof.layer_speed or 0,
+        mov_boosted = proof.mov_boosted or 0,
     })
 end
 
@@ -545,6 +549,9 @@ local travel_last, travel_t = nil, 0
 local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
 local MOV_HOLD_FRAMES = 45 -- ~0.75s at 60fps: bridges transitions + stick flicker
 local mov_hold = 0
+-- v2.3: past this much of an attack clip the swing is recovery, not strike.
+local REC_AT = 0.6
+local last_bank, last_motid = nil, nil -- v2.3: clip changes force a rewrite
 -- v2.1 engage/release event ring (last 12) for diagnosing delays from data.
 local function ring_push(ev)
     proof.ring[#proof.ring + 1] = { t = tick, e = ev }
@@ -588,6 +595,16 @@ end
 re.on_pre_application_entry("UpdateMotion", function()
     tick = tick + 1
     if tick % 600 == 0 then write_proof() end
+    -- v2.3: sample the actual layer-0 speed 1x/sec while latched. If the
+    -- game resets speeds behind our back, this shows it in the proof.
+    if tick % 60 == 0 and mov_hold > 0 then
+        local mo_s = player_motion()
+        local ly_s = mo_s and try_call(mo_s, "getLayer", 0) or nil
+        local sp = ly_s and try_call(ly_s, "get_Speed") or nil
+        if type(sp) == "number" then
+            proof.layer_speed = math.floor(sp * 100) / 100
+        end
+    end
     local want_atk = cfg.atk ~= nil and cfg.atk > 1.0
     local want_mov = cfg.mov ~= nil and cfg.mov > 1.0
     if not want_atk and not want_mov then
@@ -605,18 +622,27 @@ re.on_pre_application_entry("UpdateMotion", function()
     local cat = action_category()
     local act = current_action()
     if cat == "attack" then
-        -- v2.0: attacks NEVER get MOV. ATK scales them, otherwise restore.
-        -- Previously the movement block below could engage mid-swing from
-        -- slide drift or hold bleed, tying the two sliders together.
-        travel_last, mov_hold = nil, 0
-        proof.mov_blocked = "attack"
-        if want_atk then
-            scale_layers(cfg.atk)
-        elseif next(layer_orig) ~= nil then
-            restore_layers()
+        -- v2.3: the strike never gets MOV, but past REC_AT of the clip it
+        -- is recovery - fall through to the movement block so a chained
+        -- sprint doesn't wait out the tail of the swing.
+        local rec = nil
+        if want_mov then
+            local mo_r = player_motion()
+            local ly_r = mo_r and try_call(mo_r, "getLayer", 0) or nil
+            rec = ly_r and try_call(ly_r, "get_NormalizeTime") or nil
         end
-        sync_root_rate(1.0, false)
-        return
+        if type(rec) ~= "number" or rec < REC_AT then
+            travel_last, mov_hold = nil, 0
+            proof.mov_blocked = "attack"
+            if want_atk then
+                scale_layers(cfg.atk)
+            elseif next(layer_orig) ~= nil then
+                restore_layers()
+            end
+            sync_root_rate(1.0, false)
+            return
+        end
+        proof.mov_blocked = "attack-rec"
     end
     if act ~= nil and is_interaction_action(act) then
         -- v2.0: FasterInteractions owns these actions (its own layer
@@ -628,7 +654,7 @@ re.on_pre_application_entry("UpdateMotion", function()
         sync_root_rate(1.0, false)
         return
     end
-    proof.mov_blocked = nil
+    if proof.mov_blocked ~= "attack-rec" then proof.mov_blocked = nil end
     if want_mov and player_go ~= nil then
         local aname = action_name()
         local climbing = false
@@ -651,6 +677,12 @@ re.on_pre_application_entry("UpdateMotion", function()
             local bank = layer and try_call(layer, "get_MotionBankID") or nil
             local motid = layer and try_call(layer, "get_MotionID") or nil
             if type(bank) == "number" and type(motid) == "number" then
+                if bank ~= last_bank or motid ~= last_motid then
+                    -- v2.3: the game may reset layer speeds on clip changes;
+                    -- drop the write cache so this frame rewrites for sure.
+                    last_bank, last_motid = bank, motid
+                    layer_out = {}
+                end
                 loco_clip = is_loco_clip(bank, motid)
                 loop_clip = is_loop_clip(bank, motid)
             end
@@ -659,16 +691,20 @@ re.on_pre_application_entry("UpdateMotion", function()
                 or aname:find("Dash") or aname:find("Sprint") or aname:find("Move")
                 or aname:find("Turn") or aname:find("Strafe") or aname:find("Jog")) or false
             -- Source 3: measured travel (tap-dash, anything the lists miss).
+            -- v2.4: the sane frame delta is ALSO the boost input (stashed
+            -- in bdx/bdz) - see the apply branch below.
             local moving = false
             local tf = try_call(player_go, "get_Transform")
             local pos = tf and try_call(tf, "get_Position") or nil
             local now = os.clock()
+            local bdx, bdz, bok = 0, 0, false
             if pos ~= nil and travel_last ~= nil then
                 local dx, dz = pos.x - travel_last.x, pos.z - travel_last.z
                 local dist = math.sqrt(dx * dx + dz * dz)
                 local dt = now - travel_t
                 if dt > 0 and dt < 1.0 and dist < MOV_MAX_STEP then
                     moving = (dist / dt) > MOV_MIN_SPEED
+                    bdx, bdz, bok = dx, dz, true
                     proof.mov_speed = math.floor(dist / dt * 100) / 100
                 end
             end
@@ -692,16 +728,38 @@ re.on_pre_application_entry("UpdateMotion", function()
                 if mov_hold == 0 then ring_push("release") end
             end
             if mov_hold > 0 then
-                -- Latch drives layer speed everywhere; root rate on loops
-                -- only, actively reset on transitions (kills the zoom).
-                -- move_act/moving engages without clip info: assume a loop
-                -- is coming and allow the rate (it self-corrects next
-                -- frame once the clip is known).
-                local want_rate = loop_clip or (not loco_clip and (move_act or moving))
+                -- v2.4: layers for the animation + displacement boost for
+                -- travel. Root rate stays OFF (the boost already contains
+                -- it - both would double up and zoom).
+                -- Boost = this frame's horizontal displacement x (mov-1),
+                -- added back to the position (rubber-band, same pattern as
+                -- FasterInteractions' gap/ladder boost). Because it scales
+                -- whatever the game did this frame, velocity-gated
+                -- transitions (DashStart etc.) reach their exit speed
+                -- sooner instead of playing out in real time.
                 scale_layers(cfg.mov)
-                sync_root_rate(cfg.mov, want_rate)
+                sync_root_rate(1.0, false)
+                local boosted = 0
+                local hurt = aname ~= nil and (aname:find("Damage", 1, true)
+                    or aname:find("Guard", 1, true) or aname:find("Stagger", 1, true)
+                    or aname:find("Knock", 1, true) or aname:find("Death", 1, true)
+                    or aname:find("Fall", 1, true) or aname:find("Hurt", 1, true)) or false
+                if not hurt and bok and pos ~= nil and tf ~= nil then
+                    local bd = math.sqrt(bdx * bdx + bdz * bdz)
+                    if bd > 0.0005 then
+                        local k = cfg.mov - 1.0
+                        pos.x, pos.z = pos.x + bdx * k, pos.z + bdz * k
+                        if pcall(tf.call, tf, "set_Position", pos) then
+                            local dtb = now - travel_t
+                            if dtb > 0 then
+                                boosted = math.floor(bd * cfg.mov / dtb * 100) / 100
+                            end
+                        end
+                    end
+                end
                 proof.mov_hold_state, proof.mov_latched_state = mov_hold, true
-                proof.mov_rate_state = want_rate
+                proof.mov_rate_state = false
+                proof.mov_boosted = boosted
                 return
             else
                 proof.mov_hold_state, proof.mov_latched_state = mov_hold, mov_latched
@@ -727,8 +785,8 @@ end)
 
 -- v2.2 event-driven kick-start: apply MOV the exact frame a locomotion
 -- action enters instead of waiting for the poll to observe a clip, an
--- action class, or measured travel. Layers + full hold only (the poll
--- decides the root rate next frame, so transitions can't zoom).
+-- action class, or measured travel. Layers + full hold only (travel comes
+-- from the v2.4 boost in the poll, so transitions can't zoom).
 -- Attack/interaction enters just clear the latch and trace.
 local LOCO_ACT_KEYS = { "Run", "Walk", "Dash", "Sprint", "Move", "Turn", "Strafe", "Jog" }
 local function is_loco_action_name(n)
@@ -788,8 +846,18 @@ do
             if is_loco_action_name(short) then
                 mov_hold = MOV_HOLD_FRAMES
                 travel_last = nil
+                layer_out = {} -- v2.3: force the write; game may have reset speeds
                 scale_layers(cfg.mov)
-                proof.last_source, proof.last_clip, proof.last_act = "doenter", "?", short
+                proof.last_source, proof.last_act = "doenter", short
+                local mo_k = player_motion()
+                local ly_k = mo_k and try_call(mo_k, "getLayer", 0) or nil
+                local bk = ly_k and try_call(ly_k, "get_MotionBankID") or nil
+                local mi = ly_k and try_call(ly_k, "get_MotionID") or nil
+                if type(bk) == "number" and type(mi) == "number" then
+                    proof.last_clip = clip_name_of(bk, mi) or "?"
+                else
+                    proof.last_clip = "?"
+                end
                 ring_push("kick:" .. short)
             end
             return sdk.PreHookResult.CALL_ORIGINAL
@@ -830,6 +898,8 @@ re.on_script_reset(function()
     cat_cache_addr, cat_cache_val = 0, nil
     travel_last, travel_t, mov_hold = nil, 0, 0
     mov_latched, mov_latched_mult, mov_rate_on = false, 1.0, false
+    last_bank, last_motid = nil, nil
+    proof.layer_speed = 0
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
