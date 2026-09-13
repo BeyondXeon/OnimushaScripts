@@ -1,18 +1,17 @@
--- MoveSpeed v2.4 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- DESTACKED: x3 peaked 55 m/s run (layers x rate x override multiply) and
--- OFF felt slow (poisoned originals restored). Now exactly TWO mechanisms:
--- layers (all loco clips) + root rate (loops only) - the v1.9 combo that
--- measured true x3. Override leg REMOVED (added nothing, stacked badly).
--- Poison-proofing: originals cached only from sane range, restores clamped,
--- rate restore unconditional, OFF state read back into the proof.
+-- MoveSpeed v2.5 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v2.5 on the v1.0 base (layers + loops-only rate, no override): attacks
+-- NEVER get MOV (the REC_AT recovery gate let drift re-engage mid-swing
+-- and tie attack speed - removed), plus v2.4's poison-proofing (sane-range
+-- orig cache, clamped restores, unconditional rate restore, OFF readback).
+-- Menu: REFramework -> ScriptRunner -> "MoveSpeed v2.5".
 --
--- Menu: REFramework -> ScriptRunner -> "MoveSpeed v2.4".
+-- Menu: REFramework -> ScriptRunner -> "MoveSpeed v1.0".
 -- Config: reframework/data/movement_speed.json. Proof: mov_proof.json.
 --
 -- Slider at 1.0 = off.
 --
 
-local MOD, VERSION, CFG_FILE = "MoveSpeed", "2.4", "movement_speed.json"
+local MOD, VERSION, CFG_FILE = "MoveSpeed", "2.5", "movement_speed.json"
 local PROOF_FILE = "mov_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -40,16 +39,6 @@ local function try_call(obj, name, ...)
     local ok, r = pcall(obj.call, obj, name, ...)
     if ok then return r end
     return nil
-end
-local function field(obj, name)
-    if obj == nil then return nil end
-    local ok, r = pcall(obj.get_field, obj, name)
-    if ok then return r end
-    return nil
-end
-local function set(obj, name, value)
-    if obj == nil then return false end
-    return pcall(obj.set_field, obj, name, value)
 end
 
 -- Player handles.
@@ -105,9 +94,8 @@ local function player_motion()
     return motion
 end
 
--- v2.4: poison-proof originals. The game parks layers at odd speeds
--- (hitstop/blockstun slow-mo, other mods' scaling); caching those as
--- "original" permanently breaks restore. Only sane base speeds qualify.
+-- v1.4: last-written mult per layer, so steady state costs zero game calls.
+-- (table itself declared near the top.)
 local function scale_layers(mult)
     local mo = player_motion()
     if mo == nil then return end
@@ -121,8 +109,8 @@ local function scale_layers(mult)
                 local orig = layer_orig[addr]
                 if orig == nil then
                     orig = try_call(layer, "get_Speed")
-                    -- base is 1.0; anything far off is transient (slow-mo,
-                    -- someone else's scaling) - leave that layer alone.
+                    -- v2.5 (from v2.4): only sane base speeds qualify as
+                    -- originals; slow-mo/transient values are left alone.
                     if type(orig) ~= "number" or orig < 0.9 or orig > 1.1 then
                         orig = nil
                     else
@@ -141,7 +129,7 @@ end
 
 local function restore_layers()
     for addr, orig in pairs(layer_orig) do
-        -- clamp: never restore anything crazy, fall back to 1.0
+        -- v2.5 (from v2.4): clamp restores, fall back to 1.0.
         local back = orig
         if type(back) ~= "number" or back < 0.9 or back > 1.1 then back = 1.0 end
         local layer = nil
@@ -174,7 +162,6 @@ local function write_proof()
         last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
         last_act = proof.last_act or "?", ring = proof.ring,
         layer_speed = proof.layer_speed or 0,
-        -- v2.4: peak per latch + off-state verification (no override leg)
         peak = peak,
         off_layer = proof.off_layer, off_rate = proof.off_rate,
     })
@@ -241,10 +228,9 @@ local function sync_root_rate(mult, want)
         rate_applied, rate_mult = true, mult
         mov_latched, mov_latched_mult, mov_rate_on = true, mult, true
     elseif rate_applied then
-        -- v2.4: UNCONDITIONAL restore. The old conditional (only if the
-        -- game left our value alone) stranded our rate whenever the game
-        -- touched it mid-latch. 1.0 is the game default; FasterInteractions
-        -- never writes rate, so this can only remove our own scaling.
+        -- v2.5 (from v2.4): UNCONDITIONAL restore. The conditional (only if
+        -- the game left our value alone) stranded our rate whenever the game
+        -- touched it mid-latch.
         pcall(entity.call, entity, "set_ActionRootTransRate", ONE_VEC)
         rate_applied = false
         mov_latched, mov_rate_on = false, false
@@ -253,8 +239,8 @@ local function sync_root_rate(mult, want)
     end
 end
 
--- v2.4: OFF-state verification. After every restore, read back what the
--- game actually holds, so a dirty OFF state shows in the dump, not in feel.
+-- v2.5 (from v2.4): OFF-state verification. After every restore, read back
+-- what the game actually holds, so a dirty OFF state shows in the dump.
 local function verify_off()
     local ol, orr = nil, nil
     local mo = player_motion()
@@ -268,7 +254,7 @@ local function verify_off()
     proof.off_rate = type(orr) == "number" and math.floor(orr * 100) / 100 or nil
 end
 
--- PEAK speed per latch (answers average-vs-peak in one dump).
+-- PEAK speed per latch.
 local peak = 0
 
 -- v1.7 movement: latched, not per-frame gated. Any locomotion sign engages
@@ -405,7 +391,7 @@ re.on_pre_application_entry("UpdateMotion", function()
     if not want_mov then
         if next(layer_orig) ~= nil then restore_layers() end
         sync_root_rate(1.0, false)
-        verify_off() -- v2.4: prove the OFF state is clean
+        verify_off() -- v2.5: prove OFF is clean
         travel_last, mov_hold = nil, 0
         return
     end
@@ -418,23 +404,14 @@ re.on_pre_application_entry("UpdateMotion", function()
     local cat = action_category()
     local act = current_action()
     if cat == "attack" then
-        -- v2.3: the strike never gets MOV, but past REC_AT of the clip it
-        -- is recovery - fall through to the movement block so a chained
-        -- sprint doesn't wait out the tail of the swing.
-        local rec = nil
-        if want_mov then
-            local mo_r = player_motion()
-            local ly_r = mo_r and try_call(mo_r, "getLayer", 0) or nil
-            rec = ly_r and try_call(ly_r, "get_NormalizeTime") or nil
-        end
-        if type(rec) ~= "number" or rec < REC_AT then
-            travel_last, mov_hold = nil, 0
-            proof.mov_blocked = "attack"
-            if next(layer_orig) ~= nil then restore_layers() end
-            sync_root_rate(1.0, false)
-            return
-        end
-        proof.mov_blocked = "attack-rec"
+        -- v2.5: the whole swing AND its recovery stay MOV-free. The old
+        -- REC_AT gate let drift re-engage mid-swing and tied attack speed.
+        -- Sprint re-engages at dash enter via kick, so nothing is lost.
+        travel_last, mov_hold = nil, 0
+        proof.mov_blocked = "attack"
+        if next(layer_orig) ~= nil then restore_layers() end
+        sync_root_rate(1.0, false)
+        return
     end
     if act ~= nil and is_interaction_action(act) then
         -- v2.0: FasterInteractions owns these actions (its own layer
@@ -446,7 +423,7 @@ re.on_pre_application_entry("UpdateMotion", function()
         sync_root_rate(1.0, false)
         return
     end
-    if proof.mov_blocked ~= "attack-rec" then proof.mov_blocked = nil end
+    proof.mov_blocked = nil
     if want_mov and player_go ~= nil then
         local aname = action_name()
         local climbing = false
@@ -509,7 +486,7 @@ re.on_pre_application_entry("UpdateMotion", function()
                     proof.last_source = src
                     proof.last_clip = clip_name_of(bank, motid) or "?"
                     proof.last_act = aname or "?"
-                    peak = 0 -- v2.3: fresh latch, fresh peak
+                    peak = 0 -- v2.5: fresh latch, fresh peak
                 end
                 mov_hold = MOV_HOLD_FRAMES
             elseif mov_hold > 0 then
@@ -517,7 +494,11 @@ re.on_pre_application_entry("UpdateMotion", function()
                 if mov_hold == 0 then ring_push("release") end
             end
             if mov_hold > 0 then
-                -- v2.4: TWO legs only (override leg removed - it stacked).
+                -- Latch drives layer speed everywhere; root rate on loops
+                -- only, actively reset on transitions (kills the zoom).
+                -- move_act/moving engages without clip info: assume a loop
+                -- is coming and allow the rate (it self-corrects next
+                -- frame once the clip is known).
                 local want_rate = loop_clip or (not loco_clip and (move_act or moving))
                 scale_layers(cfg.mov)
                 sync_root_rate(cfg.mov, want_rate)
@@ -615,7 +596,7 @@ do
                 travel_last = nil
                 layer_out = {} -- v2.3: force the write; game may have reset speeds
                 scale_layers(cfg.mov)
-                peak = 0 -- v2.4: fresh latch, fresh peak
+                peak = 0 -- v2.5: fresh latch, fresh peak
                 proof.last_source, proof.last_act = "doenter", short
                 local mo_k = player_motion()
                 local ly_k = mo_k and try_call(mo_k, "getLayer", 0) or nil
