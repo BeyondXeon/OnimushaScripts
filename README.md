@@ -2,6 +2,8 @@
 
 REFramework Lua mods for **Onimusha: Way of the Sword** (Steam). Everything here is stable and consolidated at **v1.0**. Full history lives in the commit log.
 
+> ⚠️ **100% vibe-coded, for personal use.** Every script in this repo was written by AI as a learning exercise in AI-assisted coding — not by a human modder, not reviewed for quality, and not maintained as a product. Use at your own risk, expect quirks, and don't treat anything here as a reference implementation.
+
 ## Requirements
 
 - Onimusha: Way of the Sword (Steam version recommended)
