@@ -1,8 +1,11 @@
--- Damage & Attack Speed v1.6 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v1.6: tap-dash never reaches a Loop clip, so clip-identity checks missed
--- it (hold worked, tap didn't). Movement is now keyed off measured travel:
--- whenever the body actually moves and MOV is on, layers + root rate scale,
--- whatever clip, bank or action is playing. Attacks keep their own check.
+-- Damage & Attack Speed v1.8 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v1.8: root rate re-asserted EVERY frame while latched, plus once more
+-- AFTER the game's own motion update. v1.7 wrote the rate once and assumed
+-- it stuck, but the game re-asserts ActionRootTransRate on its own state
+-- changes and wipes ours: symptom was exactly "fast animation, vanilla
+-- travel" after ~0.5s (layer speed persists, nobody resets it, so the
+-- animation stayed fast while travel fell back). Latch/hold logic from
+-- v1.7 unchanged.
 -- Climb/crawl/gap actions are excluded (the FasterInteractions mod owns
 -- those and its timing is exact).
 --
@@ -18,7 +21,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "1.6", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "1.8", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -389,6 +392,8 @@ local function write_proof()
         enemy_hook = proof.enemy_hook, enemy_fires = proof.enemy_fires or 0,
         enemy_scaled = proof.enemy_scaled or 0,
         player_calc_fires = proof.player_calc_fires or 0,
+        mov_hold = proof.mov_hold_state or 0, mov_latched = proof.mov_latched_state or false,
+        mov_speed = proof.mov_speed or 0,
     })
 end
 
@@ -440,29 +445,103 @@ local function rate_vec(mult)
     end
     return v
 end
+-- v1.8: write-through every frame while wanted. The game re-asserts
+-- ActionRootTransRate on its own state changes, so a write-once cache
+-- silently stops working (fast animation, vanilla travel). One set_ call
+-- per frame is negligible.
+local mov_latched, mov_latched_mult = false, 1.0 -- re-asserted post-update too
 local function sync_root_rate(mult, want)
     if entity == nil then return end
     if want and mult > 1.0 then
-        if rate_applied and rate_mult == mult then return end -- already set
-        local ok = pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(mult))
-        if ok then rate_applied, rate_mult = true, mult end
+        pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(mult))
+        rate_applied, rate_mult = true, mult
+        mov_latched, mov_latched_mult = true, mult
     elseif rate_applied then
         local ok, r = pcall(entity.call, entity, "get_ActionRootTransRate")
         if ok and r ~= nil and math.abs(r.x - rate_mult) < 0.001 then
             pcall(entity.call, entity, "set_ActionRootTransRate", ONE_VEC)
         end
         rate_applied = false
+        mov_latched = false
+    else
+        mov_latched = false
     end
 end
 
--- v1.6 movement: measured travel, not clip identity. Tap-dash never reaches
--- a Loop clip, so any clip/bank/action allowlist misses it. If the body is
--- moving faster than a standstill threshold, it gets layer speed + root
--- rate, whatever is playing. Climb/crawl/gap actions are excluded by class
--- name (FasterInteractions owns those with exact timing).
+-- v1.7 movement: latched, not per-frame gated. Any locomotion sign engages
+-- scaling and a hold timer keeps it through transitions and stick flicker.
+-- Engage sources (any one is enough):
+--   1. locomotion-bank clip ( Walk/Run/Dash/Jog/Strafe/Turn/Step, INCLUDING
+--      Start/Stop/Turn transitions - v1.5/v1.6 only covered Loop clips, so
+--      every sprint->walk change dropped to x1.0 for a beat);
+--   2. move action class (catches the first step before travel exists);
+--   3. measured travel (covers tap-dash and anything the lists miss).
+-- Climb/crawl/gap actions are excluded by class name (FasterInteractions
+-- owns those with exact timing). While latched, layers + root rate are
+-- re-applied every frame; restore happens only after the hold expires.
 local CLIMB_KEYS = { "Ladder", "Crawl", "GoThrough", "Climb", "Creep" }
+local MOVE_ENUMS = {
+    "app.plc_BaseMove_Mot.SetID",
+    "app.plw_KatateMove_Mot.SetID",
+    "app.plw_RyoteMove_Mot.SetID",
+    "app.plw_tree_Mot.SetID",
+    "app.plw_SubWeapon_Mot.SetID",
+}
+local LOCO_KEYS = { "Walk", "Run", "Dash", "Jog", "Strafe", "Turn", "Step", "Move" }
+local MOT_EXCLUDE = { "StepJump", "GenericFalling", "Falling", "NPC_", "Over_The_Fence",
+    "Ladder", "Ledge", "Jump", "WallRun", "Guard", "Issen", "Bow", "QuickShot", "Tired" }
+local mot_names = {}
+do
+    local n = 0
+    for _, tname in ipairs(MOVE_ENUMS) do
+        local ok_td, td = pcall(sdk.find_type_definition, tname)
+        if ok_td and td ~= nil then
+            local okf, fields = pcall(td.get_fields, td)
+            if okf and fields ~= nil then
+                for _, f in pairs(fields) do
+                    local fname = nil
+                    pcall(function() fname = f:get_name() end)
+                    if fname ~= nil and fname ~= "value__" then
+                        local okv, v = pcall(f.get_data, f, nil)
+                        if okv and type(v) == "number" then
+                            local bank = math.floor(v / 4096)
+                            mot_names[bank] = mot_names[bank] or {}
+                            mot_names[bank][v % 4096] = fname
+                            n = n + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    L("locomotion clip names loaded: " .. n)
+end
+local function is_loco_clip(bank, motid)
+    local t = mot_names[bank]
+    local name = t and t[motid] or nil
+    if name == nil then return false end
+    for _, s in ipairs(MOT_EXCLUDE) do
+        if string.find(name, s, 1, true) then return false end
+    end
+    for _, k in ipairs(LOCO_KEYS) do
+        if string.find(name, k, 1, true) then return true end
+    end
+    return false
+end
 local travel_last, travel_t = nil, 0
-local MOV_MIN_SPEED, MOV_MAX_STEP = 0.5, 5.0
+local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
+local MOV_HOLD_FRAMES = 45 -- ~0.75s at 60fps: bridges transitions + stick flicker
+local mov_hold = 0
+local function action_name()
+    if chara == nil then return nil end
+    local act = try_call(chara, "get_BaseCurrentAction")
+    if act == nil then return nil end
+    local ok, td = pcall(act.get_type_definition, act)
+    if not ok or td == nil then return nil end
+    local okf, full = pcall(td.get_full_name, td)
+    if not okf or type(full) ~= "string" then return nil end
+    return full:match("([^.]+)$") or full
+end
 
 re.on_pre_application_entry("UpdateMotion", function()
     tick = tick + 1
@@ -472,31 +551,50 @@ re.on_pre_application_entry("UpdateMotion", function()
     if not want_atk and not want_mov then
         if next(layer_orig) ~= nil then restore_layers() end
         sync_root_rate(1.0, false)
-        travel_last = nil
+        travel_last, mov_hold = nil, 0
         return
     end
     if not resolve_player() then travel_last = nil return end
     if player_go ~= nil and player_go:get_address() ~= motion_go_addr then
         restore_layers()
         motion = nil
-        travel_last = nil
+        travel_last, mov_hold = nil, 0
     end
-    local cat, act_name = action_category()
+    local cat = action_category()
     if cat == "attack" and want_atk then
         -- Attacks: animation speed carries travel; no root-rate scaling.
-        travel_last = nil
+        -- An attack also ends any movement latch (dodge/attack cancels runs).
+        travel_last, mov_hold = nil, 0
         scale_layers(cfg.atk)
         sync_root_rate(1.0, false)
         return
     end
     if want_mov and player_go ~= nil then
-        local moving, climbing = false, false
-        if act_name ~= nil then
+        local aname = action_name()
+        local climbing = false
+        if aname ~= nil then
             for _, k in ipairs(CLIMB_KEYS) do
-                if act_name:find(k, 1, true) then climbing = true break end
+                if aname:find(k, 1, true) then climbing = true break end
             end
         end
-        if not climbing then
+        if climbing then
+            travel_last, mov_hold = nil, 0
+        else
+            -- Source 1: locomotion-bank clip (loops AND transitions).
+            local loco_clip = false
+            local mo = player_motion()
+            local layer = mo and try_call(mo, "getLayer", 0) or nil
+            local bank = layer and try_call(layer, "get_MotionBankID") or nil
+            local motid = layer and try_call(layer, "get_MotionID") or nil
+            if type(bank) == "number" and type(motid) == "number" then
+                loco_clip = is_loco_clip(bank, motid)
+            end
+            -- Source 2: move action class (first step, before travel exists).
+            local move_act = aname ~= nil and (aname:find("Run") or aname:find("Walk")
+                or aname:find("Dash") or aname:find("Move") or aname:find("Turn")
+                or aname:find("Strafe") or aname:find("Jog")) or false
+            -- Source 3: measured travel (tap-dash, anything the lists miss).
+            local moving = false
             local tf = try_call(player_go, "get_Transform")
             local pos = tf and try_call(tf, "get_Position") or nil
             local now = os.clock()
@@ -515,19 +613,35 @@ re.on_pre_application_entry("UpdateMotion", function()
             else
                 travel_last = nil
             end
-        else
-            travel_last = nil
-        end
-        if moving then
-            scale_layers(cfg.mov)
-            sync_root_rate(cfg.mov, true)
-            return
+            if loco_clip or move_act or moving then
+                mov_hold = MOV_HOLD_FRAMES
+            elseif mov_hold > 0 then
+                mov_hold = mov_hold - 1
+            end
+            if mov_hold > 0 then
+                scale_layers(cfg.mov)
+                sync_root_rate(cfg.mov, true)
+                proof.mov_hold_state, proof.mov_latched_state = mov_hold, true
+                return
+            else
+                proof.mov_hold_state, proof.mov_latched_state = mov_hold, mov_latched
+            end
         end
     else
         travel_last = nil
     end
     if next(layer_orig) ~= nil then restore_layers() end
     sync_root_rate(1.0, false)
+end)
+
+-- v1.8: re-assert AFTER the game's own motion update. Whatever the game
+-- recomputes during UpdateMotion gets overridden right after, so the rate
+-- holds until next frame no matter where root motion is consumed.
+re.on_application_entry("UpdateMotion", function()
+    if not mov_latched or entity == nil then return end
+    local m = mov_latched_mult
+    if m == nil or m <= 1.0 then return end
+    pcall(entity.call, entity, "set_ActionRootTransRate", rate_vec(m))
 end)
 
 local ui_threw = false
@@ -557,6 +671,9 @@ re.on_script_reset(function()
     sync_root_rate(1.0, false)
     chara, entity, player_go, player_mod_addr, motion = nil, nil, nil, 0, nil
     layer_out = {}
+    cat_cache_addr, cat_cache_val = 0, nil
+    travel_last, travel_t, mov_hold = nil, 0, 0
+    mov_latched, mov_latched_mult = false, 1.0
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
