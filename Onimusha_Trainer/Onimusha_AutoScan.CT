@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheatTable CheatEngineTableVersion="42">
+  <CheatEntries/>
+  <UserdefinedSymbols/>
+  <LuaScript><![CDATA[
+-- ============================================================================
+-- Onimusha AutoScan v1.0 -- Onimusha: Way of the Sword (OnimushaWotS.exe)
+-- Self-driving address hunter. Open this table in Cheat Engine (7.4+) with
+-- your save loaded and it walks you through finding HP, poise, souls,
+-- stamina and XYZ position. Zero Cheat Engine skill needed: you play, it
+-- scans. Confirmed addresses become toggle entries AND export to one JSON
+-- file for trainer building. Re-run any scan after a game patch.
+-- Requires: game running, save loaded, standing somewhere safe-ish.
+-- ============================================================================
+
+local EXE = "OnimushaWotS.exe"
+local MAXC = 12          -- freeze-test at most this many candidates
+local FREEZE_SECS = 3    -- seconds each freeze test holds
+
+-- ------------------------------- helpers ----------------------------------
+-- exact-integer hex without %X float pitfalls (addresses exceed 32 bits)
+local function toHex(n)
+  n = math.floor(tonumber(n) or 0)
+  local hi = math.floor(n / 4294967296)
+  local lo = n - hi * 4294967296
+  if hi == 0 then return string.format("%X", lo) end
+  return string.format("%X%08X", hi, lo)
+end
+
+local function apiReady()
+  local need = { "showMessage", "messageDialog", "createMemScan", "createFoundList",
+    "openProcess", "getProcessIDFromProcessName", "readFloat", "writeFloat",
+    "readInteger", "writeInteger", "sleep", "getAddressList" }
+  local missing = {}
+  for _, fn in ipairs(need) do
+    if _G[fn] == nil then missing[#missing + 1] = fn end
+  end
+  if #missing > 0 then
+    showMessage("[AutoScan] Your Cheat Engine is too old or mismatched.\nMissing: " .. table.concat(missing, ", ") .. "\nInstall the latest 64-bit Cheat Engine and retry.")
+    return false
+  end
+  return true
+end
+local function info(t)
+  showMessage("[AutoScan] " .. t)
+end
+
+local function askYN(t)
+  local ok, r = pcall(messageDialog, t, mtConfirmation, mbYes, mbNo)
+  if not ok then return false end
+  return r == mrYes
+end
+
+local function askNum(cap, pr)
+  local ok, v = pcall(inputQuery, cap, pr, "")
+  if not ok or v == nil or v == "" then return nil end
+  return v
+end
+
+local function ensureGame()
+  while true do
+    local pid = getProcessIDFromProcessName(EXE)
+    if pid ~= nil and pid ~= 0 then
+      openProcess(pid)
+      return true
+    end
+    if not askYN("Game process (" .. EXE .. ") not found.\nLaunch the game and load your save first.\nYes = retry, No = quit.") then
+      return false
+    end
+  end
+end
+
+local function doFirst(opt, vt, v1)
+  local ms = createMemScan()
+  local ok, err = pcall(function()
+    ms:firstScan(opt, vt, rtRounded, v1 or "", "", 0x10000, 0x7fffffffffffffff, "", fsmNotAligned, "", false, true, false, false)
+  end)
+  if not ok then return nil, "first scan failed: " .. tostring(err) end
+  local ok2, err2 = pcall(function() ms:waitTillDone() end)
+  if not ok2 then return nil, "scan wait failed: " .. tostring(err2) end
+  return ms, nil
+end
+
+local function doNext(ms, opt, v1)
+  local ok, err = pcall(function()
+    ms:nextScan(opt, rtRounded, v1 or "", "", false, true, false, false, false)
+  end)
+  if not ok then return "next scan failed: " .. tostring(err) end
+  local ok2, err2 = pcall(function() ms:waitTillDone() end)
+  if not ok2 then return "scan wait failed: " .. tostring(err2) end
+  return nil
+end
+
+-- read result list; handles 0-based or 1-based FoundList indexing
+local function getResults(ms, maxn)
+  local okf, fl = pcall(createFoundList, ms)
+  if not okf or fl == nil then return nil, "result list failed" end
+  local okI, errI = pcall(function() fl:initialize() end)
+  if not okI then return nil, "result init failed: " .. tostring(errI) end
+  local cnt = nil
+  pcall(function() cnt = fl.Count end)
+  if type(cnt) ~= "number" then return nil, "cannot read result count" end
+  local list = {}
+  local base = 0
+  local probe = nil
+  pcall(function() probe = fl.Address[0] end)
+  if probe == nil then base = 1 end
+  local n = math.min(cnt, maxn)
+  for i = 0, n - 1 do
+    local a, v = nil, nil
+    pcall(function() a = fl.Address[i + base] end)
+    pcall(function() v = fl.Value[i + base] end)
+    if a ~= nil then
+      list[#list + 1] = { addr = a, val = tostring(v) }
+    end
+  end
+  return { count = cnt, list = list }, nil
+end
+
+local function memRead(addr, vt)
+  if vt == vtSingle then return readFloat(addr)
+  elseif vt == vtQword then return readQword(addr)
+  else return readInteger(addr) end
+end
+
+local function memWrite(addr, vt, v)
+  if vt == vtSingle then return writeFloat(addr, v)
+  elseif vt == vtQword then return writeQword(addr, v)
+  else return writeInteger(addr, v) end
+end
+
+local function vtName(vt)
+  if vt == vtSingle then return "float"
+  elseif vt == vtQword then return "qword" else return "dword" end
+end
+
+-- Hold the CURRENT value for a few seconds. Writes back what is already
+-- there, so nothing in the game can break. User confirms the visible effect.
+local function freezeTest(label, addr, vt, effect)
+  local cur = memRead(addr, vt)
+  if cur == nil then
+    info(label .. ": cannot read candidate, skipping.")
+    return false
+  end
+  info(label .. " reads " .. tostring(cur) .. ".\nHolding that exact value for " .. FREEZE_SECS .. " seconds.\nWatch the game: " .. effect)
+  local t0 = os.clock()
+  while os.clock() - t0 < FREEZE_SECS do
+    memWrite(addr, vt, cur)
+    sleep(50)
+  end
+  return askYN(label .. " held at " .. tostring(cur) .. ".\n" .. effect .. "\nDid it freeze/stop?  Yes = FOUND. No = try next candidate.")
+end
+
+local function confirmList(label, vt, effect, list)
+  for i, c in ipairs(list) do
+    if freezeTest(label .. " candidate " .. i .. "/" .. #list, c.addr, vt, effect) then
+      return c.addr
+    end
+  end
+  return nil
+end
+
+local function makeEntry(name, vt, addr)
+  local al = getAddressList()
+  local rec = al.createMemoryRecord()
+  rec.Description = name .. "  [AutoScan]"
+  rec.Address = toHex(addr)
+  rec.Type = vt
+  return rec
+end
+
+-- ------------------------------ scan flows --------------------------------
+-- Generic decreased-flow (HP via hits, stamina via sprinting).
+local function flowDecreased(label, vt, actPrompt, effect, rounds)
+  local ms, err = doFirst(soUnknownValue, vt)
+  if ms == nil then info(err); return nil end
+  for r = 1, rounds do
+    if not askYN(label .. " round " .. r .. "/" .. rounds .. ":\n" .. actPrompt .. "\nThen press Yes. (No = abort this scan)") then
+      return nil
+    end
+    local e = doNext(ms, soDecreasedValue)
+    if e then info(e); return nil end
+    local res, re = getResults(ms, MAXC + 1)
+    if res == nil then info(re); return nil end
+    if res.count == 0 then
+      info("No candidates left. Undo/redo the action differently and restart this scan.")
+      return nil
+    end
+    if res.count <= MAXC then
+      local addr = confirmList(label, vt, effect, res.list)
+      if addr ~= nil then return addr end
+      return nil
+    end
+    info(res.count .. " candidates left - one more round.")
+  end
+  local res, re = getResults(ms, MAXC)
+  if res == nil then info(re); return nil end
+  return confirmList(label, vt, effect, res.list)
+end
+
+-- Exact-number flow (souls/currency when the HUD shows the count).
+local function flowExact(label, vt, askPrompt, effect)
+  local first = askNum(label, askPrompt)
+  if first == nil then return nil end
+  local ms, err = doFirst(soExactValue, vt, first)
+  if ms == nil then info(err); return nil end
+  for r = 1, 3 do
+    local cur = askNum(label, "Change the value in game (gain/spend), then type the NEW count:", "")
+    if cur == nil then return nil end
+    local e = doNextExact(ms, vt, cur)
+    if e then info(e); return nil end
+    local res, re = getResults(ms, MAXC + 1)
+    if res == nil then info(re); return nil end
+    if res.count == 0 then info("No match - number typed differently than stored. Restart this scan."); return nil end
+    if res.count <= MAXC then
+      local addr = confirmList(label, vt, effect, res.list)
+      if addr ~= nil then return addr end
+      return nil
+    end
+    info(res.count .. " candidates left - change it once more.")
+  end
+  local res, re = getResults(ms, MAXC)
+  if res == nil then info(re); return nil end
+  return confirmList(label, vt, effect, res.list)
+end
+
+function doNextExact(ms, vt, val)
+  -- exact next scan needs the vartype-known call; reuse doNext (type persists)
+  return doNext(ms, soExactValue, val)
+end
+
+-- Changed/unchanged flow (poise while fighting, XYZ while moving).
+local function flowChanged(label, vt, actPrompt, idlePrompt, effect, rounds)
+  local ms, err = doFirst(soUnknownValue, vt)
+  if ms == nil then info(err); return nil end
+  for r = 1, rounds do
+    if not askYN(label .. " round " .. r .. "/" .. rounds .. ":\n" .. actPrompt .. "\nThen press Yes. (No = abort)") then
+      return nil
+    end
+    local e = doNext(ms, soChangedValue)
+    if e then info(e); return nil end
+    if not askYN("Now: " .. idlePrompt .. "\nThen press Yes. (No = abort)") then
+      return nil
+    end
+    local e2 = doNext(ms, soUnchangedValue)
+    if e2 then info(e2); return nil end
+    local res, re = getResults(ms, MAXC + 1)
+    if res == nil then info(re); return nil end
+    if res.count == 0 then info("No candidates left. Restart this scan."); return nil end
+    if res.count <= MAXC then
+      local addr = confirmList(label, vt, effect, res.list)
+      if addr ~= nil then return addr end
+      return nil
+    end
+    info(res.count .. " candidates left - one more round.")
+  end
+  local res, re = getResults(ms, MAXC)
+  if res == nil then info(re); return nil end
+  return confirmList(label, vt, effect, res.list)
+end
+
+-- -------------------------------- export ----------------------------------
+local function exportJSON(found)
+  local lines = {}
+  lines[#lines + 1] = "{"
+  lines[#lines + 1] = '  "game": "Onimusha: Way of the Sword",'
+  lines[#lines + 1] = '  "exe": "' .. EXE .. '",'
+  local base = "unknown"
+  pcall(function() base = toHex(getAddress(EXE)) end)
+  lines[#lines + 1] = '  "moduleBase": "' .. base .. '",'
+  local ts = "unknown"
+  pcall(function() ts = os.date("!%Y-%m-%dT%H:%M:%SZ") end)
+  lines[#lines + 1] = '  "exported": "' .. ts .. '",'
+  lines[#lines + 1] = '  "entries": ['
+  for i, e in ipairs(found) do
+    local comma = (i < #found) and "," or ""
+    lines[#lines + 1] = '    {"name": "' .. e.name .. '", "type": "' .. e.typename .. '", "address": "' .. toHex(e.addr) .. '"}' .. comma
+  end
+  lines[#lines + 1] = "  ]"
+  lines[#lines + 1] = "}"
+  local home = os.getenv("USERPROFILE") or "C:\\"
+  local path = home .. "\\Documents\\OnimushaScan.json"
+  local f, ferr = io.open(path, "w")
+  if f == nil then
+    info("Cannot write file: " .. tostring(ferr))
+    return nil
+  end
+  f:write(table.concat(lines, "\n"))
+  f:close()
+  return path
+end
+
+-- --------------------------------- main -----------------------------------
+local function main()
+  if not apiReady() then return end
+  info("Onimusha AutoScan v1.0\nI will find HP, poise, souls, stamina and XYZ for you.\nKeep your save loaded. Nothing here can break your game: test writes only ever write back the value already there.")
+  if not ensureGame() then return end
+  local found = {}
+  local function keep(name, vt, addr)
+    if addr == nil then return end
+    found[#found + 1] = { name = name, typename = vtName(vt), addr = addr }
+    makeEntry(name, vt, addr)
+    info(name .. " locked in at " .. toHex(addr) .. " (also added as a toggle entry - check its box to freeze).")
+  end
+
+  if askYN("Scan HP? (float: take hits when asked)") then
+    keep("HP", vtSingle, flowDecreased("HP", vtSingle, "TAKE A HIT (lose HP).", "your HP bar freezes during each test.", 6))
+  end
+  if askYN("Scan souls/currency? (exact count from your menu)") then
+    local addr = flowExact("Souls", vtDword, "Type your CURRENT souls count:", "gain souls - the count must not move during each test.")
+    local vtype = vtDword
+    if addr == nil and askYN("No exact match. Souls might be 64-bit. Try qword scan?") then
+      addr = flowExact("Souls", vtQword, "Type your CURRENT souls count:", "gain souls - the count must not move during each test.")
+      vtype = vtQword
+    end
+    keep("Souls", vtype, addr)
+  end
+  if askYN("Scan stamina? (float: sprint until it drops)") then
+    keep("Stamina", vtSingle, flowDecreased("Stamina", vtSingle, "SPRINT until the stamina bar clearly drops.", "the stamina bar freezes during each test.", 5))
+  end
+  if askYN("Scan poise/stagger? (float: fight, then stand still)") then
+    keep("Poise", vtSingle, flowChanged("Poise", vtSingle, "FIGHT and take a few hits (meter moves).", "stand COMPLETELY still for 5 seconds.", "the poise/stagger bar freezes during each test.", 3))
+  end
+  if askYN("Scan XYZ position? (float triple: run, then stand still. Position tests rubber-band you briefly.)") then
+    keep("PosX?", vtSingle, flowChanged("XYZ", vtSingle, "RUN forward for 3 seconds.", "stand COMPLETELY still for 5 seconds.", "you get RUBBER-BANDED (cannot move) during each test - that means FOUND.", 3))
+  end
+
+  if #found == 0 then
+    info("Nothing confirmed this run. Re-open this table any time to retry - scans improve as values change more.")
+    return
+  end
+  if askYN(#found .. " address(es) confirmed. Export them to OnimushaScan.json now?") then
+    local path = exportJSON(found)
+    if path ~= nil then
+      info("Exported " .. #found .. " entries to:\n" .. path .. "\nSend this file to your mod builder.")
+    end
+  end
+  info("Done. Confirmed entries stay in this table - tick their boxes to freeze values. Re-open the table after any game patch to re-run.")
+end
+
+local ok, err = pcall(main)
+if not ok then
+  showMessage("[AutoScan] stopped with an error (nothing was harmed):\n" .. tostring(err) .. "\n\nScreenshot this message and send it back - one fix and we continue.")
+end
+]]></LuaScript>
+</CheatTable>
