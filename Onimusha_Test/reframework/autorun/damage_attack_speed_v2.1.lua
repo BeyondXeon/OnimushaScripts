@@ -1,10 +1,10 @@
--- Damage & Attack Speed v1.9 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v1.9: root rate on LOOP clips only. v1.8 fixed travel but overshot at
--- start: Start/Stop/Turn transitions are NOT root-motion normalised, so
--- layer speed alone already speeds their travel - adding the rate on top
--- multiplied twice (x3*x3 zoom) until the Loop began. Now the latch drives
--- layer speed on every locomotion clip, but the root rate only while a
--- Loop clip plays; transitions actively reset the rate to x1.
+-- Damage & Attack Speed v2.1 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- v2.1: the word "Sprint" was missing from every detection list, so sprint
+-- clips/actions could only engage via measured travel - after an attack
+-- (stationary, hold zeroed) that meant 0.5-1s of vanilla sprint until the
+-- body displaced enough. Sprint is now a first-class locomotion keyword
+-- next to Walk/Run/Dash/Jog. Plus an engage event ring in the proof file
+-- so any future delay can be diagnosed from data instead of guesses.
 --
 -- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
 -- scaling at any setting. Module resolution is now multi-step with a trail
@@ -18,7 +18,7 @@
 -- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
 -- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "1.9", "damage_attack_speed.json"
+local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.1", "damage_attack_speed.json"
 local PROOF_FILE = "damage_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
@@ -75,7 +75,7 @@ local layer_orig, layer_out = {}, {}
 local cat_cache_addr, cat_cache_val = 0, nil
 local proof = { mod_addr = 0, attached = {}, addrs = {}, mult_hits = 0, player_fires = 0,
     calc_fires = 0, calc_scaled = 0, entity_type = "-", mod_step = "-",
-    enemy_hook = "-", player_calc_fires = 0 }
+    enemy_hook = "-", player_calc_fires = 0, ring = {} }
 
 local function type_name_of(obj)
     if obj == nil then return "nil" end
@@ -390,7 +390,10 @@ local function write_proof()
         enemy_scaled = proof.enemy_scaled or 0,
         player_calc_fires = proof.player_calc_fires or 0,
         mov_hold = proof.mov_hold_state or 0, mov_latched = proof.mov_latched_state or false,
+        mov_blocked = proof.mov_blocked or "-",
         mov_speed = proof.mov_speed or 0,
+        last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
+        last_act = proof.last_act or "?", ring = proof.ring,
     })
 end
 
@@ -413,8 +416,8 @@ local function action_category()
         if okf and type(full) == "string" then
             local n = full:match("([^.]+)$") or full
             if n:find("Attack") then cat = "attack"
-            elseif n:find("Run") or n:find("Walk") or n:find("Dash") or n:find("Move")
-                or n:find("Turn") or n:find("Strafe") or n:find("Jog") then
+            elseif n:find("Run") or n:find("Walk") or n:find("Dash") or n:find("Sprint")
+                or n:find("Move") or n:find("Turn") or n:find("Strafe") or n:find("Jog") then
                 cat = "move"
             else
                 cat = "other"
@@ -485,7 +488,7 @@ local MOVE_ENUMS = {
     "app.plw_tree_Mot.SetID",
     "app.plw_SubWeapon_Mot.SetID",
 }
-local LOCO_KEYS = { "Walk", "Run", "Dash", "Jog", "Strafe", "Turn", "Step", "Move" }
+local LOCO_KEYS = { "Walk", "Run", "Dash", "Sprint", "Jog", "Strafe", "Turn", "Step", "Move" }
 local MOT_EXCLUDE = { "StepJump", "GenericFalling", "Falling", "NPC_", "Over_The_Fence",
     "Ladder", "Ledge", "Jump", "WallRun", "Guard", "Issen", "Bow", "QuickShot", "Tired" }
 local mot_names = {}
@@ -540,15 +543,44 @@ local travel_last, travel_t = nil, 0
 local MOV_MIN_SPEED, MOV_MAX_STEP = 0.3, 5.0
 local MOV_HOLD_FRAMES = 45 -- ~0.75s at 60fps: bridges transitions + stick flicker
 local mov_hold = 0
-local function action_name()
+-- v2.1 engage/release event ring (last 12) for diagnosing delays from data.
+local function ring_push(ev)
+    proof.ring[#proof.ring + 1] = { t = tick, e = ev }
+    while #proof.ring > 12 do table.remove(proof.ring, 1) end
+end
+local function current_action()
     if chara == nil then return nil end
-    local act = try_call(chara, "get_BaseCurrentAction")
+    return try_call(chara, "get_BaseCurrentAction")
+end
+local function action_name()
+    local act = current_action()
     if act == nil then return nil end
     local ok, td = pcall(act.get_type_definition, act)
     if not ok or td == nil then return nil end
     local okf, full = pcall(td.get_full_name, td)
     if not okf or type(full) ~= "string" then return nil end
     return full:match("([^.]+)$") or full
+end
+-- v2.0: FasterInteractions' action classes (same classification it uses).
+-- While one of these runs, DamageSpeed stays out entirely: no MOV latch,
+-- no hold bleed, no competing orig cache on the same layers.
+local function is_interaction_action(act)
+    if act == nil then return false end
+    local ok, td = pcall(act.get_type_definition, act)
+    if not ok or td == nil then return false end
+    local function isa(name)
+        local okr, r = pcall(td.is_a, td, name)
+        return okr and r == true
+    end
+    if isa("app.PlayerCommonAction.cLadderActionBase") then return true end
+    if isa("app.PlayerCommonAction.cCreepBase") then return true end
+    if isa("app.PlayerCommonAction.cGoThroughBase") then return true end
+    if isa("app.PlayerCommonAction.cInteractGimmickBase") then return true end
+    local okf, full = pcall(td.get_full_name, td)
+    if okf and type(full) == "string" and full:find("DemonTendon", 1, true) then
+        return true
+    end
+    return false
 end
 
 re.on_pre_application_entry("UpdateMotion", function()
@@ -569,14 +601,32 @@ re.on_pre_application_entry("UpdateMotion", function()
         travel_last, mov_hold = nil, 0
     end
     local cat = action_category()
-    if cat == "attack" and want_atk then
-        -- Attacks: animation speed carries travel; no root-rate scaling.
-        -- An attack also ends any movement latch (dodge/attack cancels runs).
+    local act = current_action()
+    if cat == "attack" then
+        -- v2.0: attacks NEVER get MOV. ATK scales them, otherwise restore.
+        -- Previously the movement block below could engage mid-swing from
+        -- slide drift or hold bleed, tying the two sliders together.
         travel_last, mov_hold = nil, 0
-        scale_layers(cfg.atk)
+        proof.mov_blocked = "attack"
+        if want_atk then
+            scale_layers(cfg.atk)
+        elseif next(layer_orig) ~= nil then
+            restore_layers()
+        end
         sync_root_rate(1.0, false)
         return
     end
+    if act ~= nil and is_interaction_action(act) then
+        -- v2.0: FasterInteractions owns these actions (its own layer
+        -- scaling runs after ours each frame). Stay out: clear the latch
+        -- so no hold bleeds from the run into the interaction.
+        travel_last, mov_hold = nil, 0
+        proof.mov_blocked = "interact"
+        if next(layer_orig) ~= nil then restore_layers() end
+        sync_root_rate(1.0, false)
+        return
+    end
+    proof.mov_blocked = nil
     if want_mov and player_go ~= nil then
         local aname = action_name()
         local climbing = false
@@ -604,8 +654,8 @@ re.on_pre_application_entry("UpdateMotion", function()
             end
             -- Source 2: move action class (first step, before travel exists).
             local move_act = aname ~= nil and (aname:find("Run") or aname:find("Walk")
-                or aname:find("Dash") or aname:find("Move") or aname:find("Turn")
-                or aname:find("Strafe") or aname:find("Jog")) or false
+                or aname:find("Dash") or aname:find("Sprint") or aname:find("Move")
+                or aname:find("Turn") or aname:find("Strafe") or aname:find("Jog")) or false
             -- Source 3: measured travel (tap-dash, anything the lists miss).
             local moving = false
             local tf = try_call(player_go, "get_Transform")
@@ -627,9 +677,17 @@ re.on_pre_application_entry("UpdateMotion", function()
                 travel_last = nil
             end
             if loco_clip or move_act or moving then
+                local src = loco_clip and "clip" or (move_act and "action" or "travel")
+                if mov_hold <= 0 then
+                    ring_push("engage:" .. src)
+                    proof.last_source = src
+                    proof.last_clip = clip_name_of(bank, motid) or "?"
+                    proof.last_act = aname or "?"
+                end
                 mov_hold = MOV_HOLD_FRAMES
             elseif mov_hold > 0 then
                 mov_hold = mov_hold - 1
+                if mov_hold == 0 then ring_push("release") end
             end
             if mov_hold > 0 then
                 -- Latch drives layer speed everywhere; root rate on loops
@@ -698,6 +756,7 @@ re.on_script_reset(function()
     cat_cache_addr, cat_cache_val = 0, nil
     proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
     proof.calc_fires, proof.calc_scaled = 0, 0
+    proof.ring, proof.last_source = {}, nil
 end)
 
 re.on_config_save(function() save() end)

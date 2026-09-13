@@ -125,6 +125,7 @@ local function tier_of(name)
     -- "Loop" without the underscore so the strafe sets (JogLoop_FR, DashLoop_BL) count too.
     if cfg.loops_only and not string.find(name, "Loop", 1, true) then return nil end
     if string.find(name, "Dash", 1, true) then return "dash" end
+    if string.find(name, "Sprint", 1, true) then return "dash" end -- sprint sustains like dash
     if string.find(name, "Run", 1, true) then return "run" end
     if string.find(name, "Walk", 1, true) or string.find(name, "Jog", 1, true) then return "walk" end
     return nil
