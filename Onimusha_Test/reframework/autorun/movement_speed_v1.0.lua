@@ -1,48 +1,37 @@
--- Damage & Attack Speed v2.4 -- Onimusha: Way of the Sword, REFramework Lua autorun.
--- v2.4: different approach - displacement boost instead of root rate. Proof
--- showed layer_speed sticks at 2.0 yet DashStart->Dash still takes ~48
--- ticks: start transitions are VELOCITY-gated (they exit when the body is
--- fast enough, and the ramp is physics, not clip), so no amount of clip
--- scaling shortens them. Now, while latched, each frame's measured
--- horizontal displacement is multiplied (same rubber-band pattern as the
--- FasterInteractions gap/ladder boost): thresholds are reached sooner, so
--- the ramp itself is shorter AND travel is faster throughout. Root rate
--- stays off (boost already contains it - both would double up). Damage,
--- guard, stagger, knockdown, death and falls are excluded from the boost.
+-- MoveSpeed v1.0 -- Onimusha: Way of the Sword, REFramework Lua autorun.
+-- Standalone movement scaler, split out of the DamageSpeed combo script
+-- (combo line retired at v2.4 - its v2.4 displacement boost ran away via
+-- feedback and was reverted). Locomotion only: layer speed everywhere +
+-- root rate on Loop clips only (transitions would double up and zoom).
+-- Engage sources: locomotion-bank clip, move action class, measured
+-- travel; a 45-frame hold bridges transitions, and a doEnter kick-start
+-- applies layers the exact frame a locomotion action begins. Attacks and
+-- FasterInteractions actions never get MOV (each mod owns its actions).
 --
--- v1.3: proof showed mod_addr:0, so the player-module gate blocked ALL
--- scaling at any setting. Module resolution is now multi-step with a trail
--- (direct field, then full field-type scan), the entity type name is
--- recorded, the player-subclass calc is counted, and an enemy-subclass calc
--- hook is attempted at runtime (registry absence may just be dump reach).
--- No behavior change except the resolution fix; attribution data decides v1.4.
+-- Menu: REFramework -> ScriptRunner -> "MoveSpeed v1.0".
+-- Config: reframework/data/movement_speed.json. Proof: mov_proof.json.
 --
--- Sliders at 1.0 = off. Fire counters go to damage_proof.json.
+-- Slider at 1.0 = off.
 --
--- Menu: REFramework -> ScriptRunner -> "Damage & Attack Speed v1.6".
--- Config: reframework/data/damage_attack_speed.json (stable across versions).
 
-local MOD, VERSION, CFG_FILE = "DamageSpeed", "2.4", "damage_attack_speed.json"
-local PROOF_FILE = "damage_proof.json"
+local MOD, VERSION, CFG_FILE = "MoveSpeed", "1.0", "movement_speed.json"
+local PROOF_FILE = "mov_proof.json"
 local TAG = "[" .. MOD .. "] "
 local MAX_LAYERS = 64
 
 local function L(msg) log.info(TAG .. tostring(msg)) end
 
-local cfg = { dmg = 1.0, atk = 1.0, mov = 1.0 }
+local cfg = { mov = 1.0 }
 do
     local ok, saved = pcall(json.load_file, CFG_FILE)
     if ok and type(saved) == "table" then
-        if type(saved.dmg) == "number" then cfg.dmg = math.max(1.0, math.min(10.0, saved.dmg)) end
-        if type(saved.atk) == "number" then cfg.atk = math.max(1.0, math.min(3.0, saved.atk)) end
-        if type(saved.mov) == "number" then
-            cfg.mov = math.max(1.0, math.min(3.0, saved.mov))
-        elseif type(saved.act) == "number" then
-            cfg.mov = math.max(1.0, math.min(3.0, saved.act)) -- v1.1-v1.4 -> v1.5
-        elseif type(saved.spd) == "number" then
-            cfg.mov = math.max(1.0, math.min(3.0, saved.spd)) -- v1.0 -> v1.5
-        end
+        if type(saved.mov) == "number" then cfg.mov = math.max(1.0, math.min(3.0, saved.mov)) end
     else
+        -- Fresh install: carry over the combo script's setting once.
+        local oko, old = pcall(json.load_file, "damage_attack_speed.json")
+        if oko and type(old) == "table" and type(old.mov) == "number" then
+            cfg.mov = math.max(1.0, math.min(3.0, old.mov))
+        end
         pcall(json.dump_file, CFG_FILE, cfg)
     end
 end
@@ -55,86 +44,15 @@ local function try_call(obj, name, ...)
     return nil
 end
 
-local function try_field(obj, name)
-    if obj == nil then return nil end
-    local ok, r = pcall(obj.get_field, obj, name)
-    if ok then return r end
-    return nil
-end
-
-local function is_managed_object(v)
-    if v == nil then return false end
-    local ok, td = pcall(function() return v:get_type_definition() end)
-    if not ok or td == nil then return false end
-    return pcall(function() return v:get_address() end)
-end
-
--- Player handles + own damage-module address (excluded from the multiplier).
--- Declared BEFORE the proof block: resolve_module (below) reads/writes them.
-local chara, entity, player_go, player_mod_addr = nil, nil, nil, 0
+-- Player handles.
+local chara, entity, player_go = nil, nil, nil
 local resolve_cooldown = 0
--- v1.4 write-skip + category caches, also before resolve_player (which
--- clears them on player change) so nothing binds to globals.
+-- Write-skip + category caches, before resolve_player (which clears them
+-- on player change) so nothing binds to globals.
 local layer_orig, layer_out = {}, {}
 local cat_cache_addr, cat_cache_val = 0, nil
-local proof = { mod_addr = 0, attached = {}, addrs = {}, mult_hits = 0, player_fires = 0,
-    calc_fires = 0, calc_scaled = 0, entity_type = "-", mod_step = "-",
-    enemy_hook = "-", player_calc_fires = 0, ring = {} }
+local proof = { entity_type = "-", ring = {} }
 
-local function type_name_of(obj)
-    if obj == nil then return "nil" end
-    local ok, td = pcall(obj.get_type_definition, obj)
-    if ok and td ~= nil then
-        local okn, n = pcall(td.get_full_name, td)
-        if okn and n then return tostring(n) end
-    end
-    return "?"
-end
-
--- v1.3 module resolution: direct field first, then scan every field for the
--- module type. Records which step worked (or that all failed).
-local function resolve_module()
-    player_mod_addr = 0
-    proof.mod_step = "no entity"
-    if entity == nil then return end
-    proof.entity_type = type_name_of(entity)
-    local mod = try_field(entity, "_DamageInterface")
-    if is_managed_object(mod) then
-        pcall(function() player_mod_addr = mod:get_address() end)
-        if player_mod_addr ~= 0 then proof.mod_step = "field" end
-    end
-    if player_mod_addr == 0 then
-        local ok_td, td = pcall(entity.get_type_definition, entity)
-        if ok_td and td ~= nil then
-            local okf, fields = pcall(td.get_fields, td)
-            if okf and fields ~= nil then
-                for _, f in pairs(fields) do
-                    local ftname = "?"
-                    pcall(function()
-                        local ft = f:get_type()
-                        if ft ~= nil then ftname = ft:get_full_name() end
-                    end)
-                    if ftname == "app.cPlayerApplyDamage" then
-                        local fname = nil
-                        pcall(function() fname = f:get_name() end)
-                        if type(fname) == "string" then
-                            local m2 = try_field(entity, fname)
-                            if is_managed_object(m2) then
-                                pcall(function() player_mod_addr = m2:get_address() end)
-                                if player_mod_addr ~= 0 then
-                                    proof.mod_step = "scan:" .. fname
-                                    break
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    if player_mod_addr == 0 then proof.mod_step = "FAILED" end
-    proof.mod_addr = player_mod_addr
-end
 
 local function resolve_player()
     if resolve_cooldown > 0 then resolve_cooldown = resolve_cooldown - 1 return entity ~= nil end
@@ -144,174 +62,23 @@ local function resolve_player()
     local go = mi and try_call(mi, "get_Object") or nil
     if go == nil then return false end
     if player_go == nil or go:get_address() ~= player_go:get_address() then
-        player_go, entity, chara, player_mod_addr = go, nil, nil, 0
+        player_go, entity, chara = go, nil, nil
         layer_out = {}
         cat_cache_addr, cat_cache_val = 0, nil
     end
     chara = try_call(mi, "get_Character")
     entity = try_call(mi, "get_CharacterEntity")
-    resolve_module()
+    if entity ~= nil then
+        pcall(function()
+            local td = entity:get_type_definition()
+            if td ~= nil then proof.entity_type = tostring(td:get_full_name()) end
+        end)
+    end
     return entity ~= nil
 end
 
--- Damage multiplier: base getDamageRate + getAttackRate post-hooks (v1.0
--- proved rate alone is not the choke). Player's own module passes through;
--- everything else gets xN. Player-module fires are counted (not multiplied)
--- to settle attacker vs victim attribution from normal play.
-local dmg_armed = false
-local function install_rate_hook(td, mname)
-    local ok_m, m = pcall(td.get_method, td, mname)
-    if not ok_m or m == nil then
-        proof.attached[mname] = false
-        L(mname .. ": METHOD NOT FOUND")
-        return false
-    end
-    local attached = pcall(sdk.hook, m, function(args)
-        -- Post-hooks receive only retval: capture the module address here.
-        local st = thread.get_hook_storage()
-        st.dmg_this = 0
-        pcall(function() st.dmg_this = sdk.to_int64(args[2]) end)
-        return sdk.PreHookResult.CALL_ORIGINAL
-    end, function(retval)
-        -- v1.2: rates count only (multiplying them did nothing). The scaling
-        -- moved to calcDamage outputs below.
-        local st = thread.get_hook_storage()
-        local this_addr = st.dmg_this or 0
-        if this_addr ~= 0 and this_addr == player_mod_addr and player_mod_addr ~= 0 then
-            proof.player_fires = proof.player_fires + 1
-        elseif this_addr ~= 0 then
-            local nkeys = 0
-            for _ in pairs(proof.addrs) do nkeys = nkeys + 1 end
-            if proof.addrs[this_addr] ~= nil or nkeys < 50 then
-                proof.addrs[this_addr] = (proof.addrs[this_addr] or 0) + 1
-            end
-        end
-        return retval
-    end)
-    proof.attached[mname] = attached
-    L(mname .. " hook " .. (attached and "ATTACHED" or "FAILED"))
-    return attached
-end
 
--- v1.2 primary: scale calcDamage's computed outputs on the cApplyParam.
--- Whatever rates fed the calc, the final numbers get xN. Player's own
--- module excluded, same as the rates.
-local function scale_param_number(param, fname, mult, is_int)
-    local okv, v = pcall(param.get_field, param, fname)
-    if not okv or type(v) ~= "number" then return end
-    local nv = v * mult
-    if is_int then nv = math.floor(nv + 0.5) end
-    pcall(param.set_field, param, fname, nv)
-end
-
-local function install_calc_hook(td)
-    local ok_m, m = pcall(td.get_method, td, "calcDamage")
-    if not ok_m or m == nil then
-        proof.attached["calcDamage"] = false
-        L("calcDamage: METHOD NOT FOUND")
-        return false
-    end
-    local attached = pcall(sdk.hook, m, function(args)
-        -- Post-hooks receive only retval: capture module + param here.
-        local st = thread.get_hook_storage()
-        st.calc_this, st.calc_param = 0, nil
-        pcall(function()
-            st.calc_this = sdk.to_int64(args[2])
-            st.calc_param = sdk.to_managed_object(args[3])
-        end)
-        return sdk.PreHookResult.CALL_ORIGINAL
-    end, function(retval)
-        local mult = cfg.dmg
-        local st = thread.get_hook_storage()
-        local this_addr = st.calc_this or 0
-        local param = st.calc_param
-        st.calc_this, st.calc_param = 0, nil
-        if this_addr ~= 0 then proof.calc_fires = proof.calc_fires + 1 end
-        if mult == nil or mult <= 1.0 then return retval end
-        if this_addr == 0 or this_addr == player_mod_addr or player_mod_addr == 0 then
-            return retval
-        end
-        if param == nil then return retval end
-        scale_param_number(param, "Damage", mult, false)
-        scale_param_number(param, "HealthDecrease", mult, true)
-        scale_param_number(param, "RikidoDamage", mult, false)
-        scale_param_number(param, "RikidoDecrease", mult, true)
-        proof.calc_scaled = proof.calc_scaled + 1
-        return retval
-    end)
-    proof.attached["calcDamage"] = attached
-    L("calcDamage hook " .. (attached and "ATTACHED" or "FAILED"))
-    return attached
-end
-
--- v1.3 attribution: count calcDamage on the PLAYER's subclass (tells whether
--- the player's module computes outgoing hits), and try an enemy-subclass
--- calc hook at runtime (enemies-only by construction if it resolves).
-local function install_player_calc_counter()
-    local ok_td, td = pcall(sdk.find_type_definition, "app.cPlayerApplyDamage")
-    if not ok_td or td == nil then return end
-    local ok_m, m = pcall(td.get_method, td, "calcDamage")
-    if not ok_m or m == nil then return end
-    pcall(sdk.hook, m, function(args)
-        return sdk.PreHookResult.CALL_ORIGINAL
-    end, function(retval)
-        proof.player_calc_fires = (proof.player_calc_fires or 0) + 1
-        return retval
-    end)
-end
-
-local function install_enemy_calc_hook()
-    local ok_td, td = pcall(sdk.find_type_definition, "app.cEnemyApplyDamage")
-    if not ok_td or td == nil then
-        proof.enemy_hook = "type missing"
-        return
-    end
-    local ok_m, m = pcall(td.get_method, td, "calcDamage")
-    if not ok_m or m == nil then
-        proof.enemy_hook = "method missing"
-        return
-    end
-    local attached = pcall(sdk.hook, m, function(args)
-        local st = thread.get_hook_storage()
-        st.ecalc_param = nil
-        pcall(function() st.ecalc_param = sdk.to_managed_object(args[3]) end)
-        return sdk.PreHookResult.CALL_ORIGINAL
-    end, function(retval)
-        local mult = cfg.dmg
-        local st = thread.get_hook_storage()
-        local param = st.ecalc_param
-        st.ecalc_param = nil
-        proof.enemy_fires = (proof.enemy_fires or 0) + 1
-        if mult == nil or mult <= 1.0 or param == nil then return retval end
-        scale_param_number(param, "Damage", mult, false)
-        scale_param_number(param, "HealthDecrease", mult, true)
-        scale_param_number(param, "RikidoDamage", mult, false)
-        scale_param_number(param, "RikidoDecrease", mult, true)
-        proof.enemy_scaled = (proof.enemy_scaled or 0) + 1
-        return retval
-    end)
-    proof.enemy_hook = attached and "ATTACHED" or "FAILED"
-    L("enemy calc hook: " .. proof.enemy_hook)
-end
-
-local function install_dmg_hook()
-    if dmg_armed then return end
-    local ok_td, td = pcall(sdk.find_type_definition, "app.cCharacterApplyDamage")
-    if not ok_td or td == nil then
-        L("cCharacterApplyDamage: TYPE NOT FOUND")
-        return
-    end
-    local a = install_rate_hook(td, "getDamageRate")
-    local b = install_rate_hook(td, "getAttackRate")
-    local c = install_calc_hook(td)
-    if a or b or c then dmg_armed = true end
-end
-
-install_dmg_hook()
-install_player_calc_counter()
-install_enemy_calc_hook()
-
--- Attack speed: scale the player's motion layers, remember originals.
+-- Motion layers: scale them, remember originals.
 -- (layer_orig/layer_out declared with the other state near the top.)
 local motion, motion_go_addr = nil, 0
 local function player_motion()
@@ -380,26 +147,15 @@ end
 
 local tick = 0
 local function write_proof()
-    local addrs, n = {}, 0
-    for addr, fires in pairs(proof.addrs) do
-        if n < 10 then addrs[tostring(addr)] = fires n = n + 1 end
-    end
     pcall(json.dump_file, PROOF_FILE, {
-        version = VERSION, tick = tick, cfg = { dmg = cfg.dmg, atk = cfg.atk, mov = cfg.mov },
-        mod_addr = proof.mod_addr, attached = proof.attached,
-        addrs = addrs, mult_hits = proof.mult_hits, player_fires = proof.player_fires,
-        calc_fires = proof.calc_fires, calc_scaled = proof.calc_scaled,
-        entity_type = proof.entity_type, mod_step = proof.mod_step,
-        enemy_hook = proof.enemy_hook, enemy_fires = proof.enemy_fires or 0,
-        enemy_scaled = proof.enemy_scaled or 0,
-        player_calc_fires = proof.player_calc_fires or 0,
+        version = VERSION, tick = tick, cfg = { mov = cfg.mov },
+        entity_type = proof.entity_type,
         mov_hold = proof.mov_hold_state or 0, mov_latched = proof.mov_latched_state or false,
         mov_blocked = proof.mov_blocked or "-",
         mov_speed = proof.mov_speed or 0,
         last_source = proof.last_source or "-", last_clip = proof.last_clip or "?",
         last_act = proof.last_act or "?", ring = proof.ring,
         layer_speed = proof.layer_speed or 0,
-        mov_boosted = proof.mov_boosted or 0,
     })
 end
 
@@ -605,9 +361,8 @@ re.on_pre_application_entry("UpdateMotion", function()
             proof.layer_speed = math.floor(sp * 100) / 100
         end
     end
-    local want_atk = cfg.atk ~= nil and cfg.atk > 1.0
     local want_mov = cfg.mov ~= nil and cfg.mov > 1.0
-    if not want_atk and not want_mov then
+    if not want_mov then
         if next(layer_orig) ~= nil then restore_layers() end
         sync_root_rate(1.0, false)
         travel_last, mov_hold = nil, 0
@@ -634,11 +389,7 @@ re.on_pre_application_entry("UpdateMotion", function()
         if type(rec) ~= "number" or rec < REC_AT then
             travel_last, mov_hold = nil, 0
             proof.mov_blocked = "attack"
-            if want_atk then
-                scale_layers(cfg.atk)
-            elseif next(layer_orig) ~= nil then
-                restore_layers()
-            end
+            if next(layer_orig) ~= nil then restore_layers() end
             sync_root_rate(1.0, false)
             return
         end
@@ -691,20 +442,16 @@ re.on_pre_application_entry("UpdateMotion", function()
                 or aname:find("Dash") or aname:find("Sprint") or aname:find("Move")
                 or aname:find("Turn") or aname:find("Strafe") or aname:find("Jog")) or false
             -- Source 3: measured travel (tap-dash, anything the lists miss).
-            -- v2.4: the sane frame delta is ALSO the boost input (stashed
-            -- in bdx/bdz) - see the apply branch below.
             local moving = false
             local tf = try_call(player_go, "get_Transform")
             local pos = tf and try_call(tf, "get_Position") or nil
             local now = os.clock()
-            local bdx, bdz, bok = 0, 0, false
             if pos ~= nil and travel_last ~= nil then
                 local dx, dz = pos.x - travel_last.x, pos.z - travel_last.z
                 local dist = math.sqrt(dx * dx + dz * dz)
                 local dt = now - travel_t
                 if dt > 0 and dt < 1.0 and dist < MOV_MAX_STEP then
                     moving = (dist / dt) > MOV_MIN_SPEED
-                    bdx, bdz, bok = dx, dz, true
                     proof.mov_speed = math.floor(dist / dt * 100) / 100
                 end
             end
@@ -728,38 +475,16 @@ re.on_pre_application_entry("UpdateMotion", function()
                 if mov_hold == 0 then ring_push("release") end
             end
             if mov_hold > 0 then
-                -- v2.4: layers for the animation + displacement boost for
-                -- travel. Root rate stays OFF (the boost already contains
-                -- it - both would double up and zoom).
-                -- Boost = this frame's horizontal displacement x (mov-1),
-                -- added back to the position (rubber-band, same pattern as
-                -- FasterInteractions' gap/ladder boost). Because it scales
-                -- whatever the game did this frame, velocity-gated
-                -- transitions (DashStart etc.) reach their exit speed
-                -- sooner instead of playing out in real time.
+                -- Latch drives layer speed everywhere; root rate on loops
+                -- only, actively reset on transitions (kills the zoom).
+                -- move_act/moving engages without clip info: assume a loop
+                -- is coming and allow the rate (it self-corrects next
+                -- frame once the clip is known).
+                local want_rate = loop_clip or (not loco_clip and (move_act or moving))
                 scale_layers(cfg.mov)
-                sync_root_rate(1.0, false)
-                local boosted = 0
-                local hurt = aname ~= nil and (aname:find("Damage", 1, true)
-                    or aname:find("Guard", 1, true) or aname:find("Stagger", 1, true)
-                    or aname:find("Knock", 1, true) or aname:find("Death", 1, true)
-                    or aname:find("Fall", 1, true) or aname:find("Hurt", 1, true)) or false
-                if not hurt and bok and pos ~= nil and tf ~= nil then
-                    local bd = math.sqrt(bdx * bdx + bdz * bdz)
-                    if bd > 0.0005 then
-                        local k = cfg.mov - 1.0
-                        pos.x, pos.z = pos.x + bdx * k, pos.z + bdz * k
-                        if pcall(tf.call, tf, "set_Position", pos) then
-                            local dtb = now - travel_t
-                            if dtb > 0 then
-                                boosted = math.floor(bd * cfg.mov / dtb * 100) / 100
-                            end
-                        end
-                    end
-                end
+                sync_root_rate(cfg.mov, want_rate)
                 proof.mov_hold_state, proof.mov_latched_state = mov_hold, true
-                proof.mov_rate_state = false
-                proof.mov_boosted = boosted
+                proof.mov_rate_state = want_rate
                 return
             else
                 proof.mov_hold_state, proof.mov_latched_state = mov_hold, mov_latched
@@ -785,8 +510,8 @@ end)
 
 -- v2.2 event-driven kick-start: apply MOV the exact frame a locomotion
 -- action enters instead of waiting for the poll to observe a clip, an
--- action class, or measured travel. Layers + full hold only (travel comes
--- from the v2.4 boost in the poll, so transitions can't zoom).
+-- action class, or measured travel. Layers + full hold only (the poll
+-- decides the root rate next frame, so transitions can't zoom).
 -- Attack/interaction enters just clear the latch and trace.
 local LOCO_ACT_KEYS = { "Run", "Walk", "Dash", "Sprint", "Move", "Turn", "Strafe", "Jog" }
 local function is_loco_action_name(n)
@@ -872,16 +597,8 @@ local ui_threw = false
 re.on_draw_ui(function()
     local ok, err = pcall(function()
         if not imgui.tree_node(MOD .. " v" .. VERSION) then return end
-        local parts = {}
-        if cfg.dmg > 1.0 then parts[#parts + 1] = string.format("DMG x%.1f", cfg.dmg) end
-        if cfg.atk > 1.0 then parts[#parts + 1] = string.format("ATK x%.1f", cfg.atk) end
-        if cfg.mov > 1.0 then parts[#parts + 1] = string.format("MOV x%.1f", cfg.mov) end
-        local active = #parts > 0 and table.concat(parts, " + ") or "OFF"
-        imgui.text_colored("ACTIVE: " .. active, #parts > 0 and 0xFF40FF40 or 0xFF808080)
-        local chd, vd = imgui.slider_float("Damage", cfg.dmg, 1.0, 10.0, "x%.1f")
-        if chd then cfg.dmg = vd save() end
-        local cha, va = imgui.slider_float("Attack Speed", cfg.atk, 1.0, 3.0, "x%.1f")
-        if cha then cfg.atk = va save() end
+        local active = cfg.mov > 1.0 and ("ACTIVE: MOV x%.1f"):format(cfg.mov) or "OFF"
+        imgui.text_colored(active, cfg.mov > 1.0 and 0xFF40FF40 or 0xFF808080)
         local chc, vc = imgui.slider_float("Movement Speed", cfg.mov, 1.0, 3.0, "x%.1f")
         if chc then cfg.mov = vc save() end
         imgui.tree_pop()
@@ -893,16 +610,13 @@ re.on_script_reset(function()
     write_proof()
     restore_layers()
     sync_root_rate(1.0, false)
-    chara, entity, player_go, player_mod_addr, motion = nil, nil, nil, 0, nil
-    layer_out = {}
+    chara, entity, player_go, motion = nil, nil, nil, nil
+    layer_orig, layer_out = {}, {}
     cat_cache_addr, cat_cache_val = 0, nil
     travel_last, travel_t, mov_hold = nil, 0, 0
     mov_latched, mov_latched_mult, mov_rate_on = false, 1.0, false
     last_bank, last_motid = nil, nil
     proof.layer_speed = 0
-    cat_cache_addr, cat_cache_val = 0, nil
-    proof.addrs, proof.mult_hits, proof.player_fires = {}, 0, 0
-    proof.calc_fires, proof.calc_scaled = 0, 0
     proof.ring, proof.last_source = {}, nil
 end)
 
